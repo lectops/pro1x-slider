@@ -1,0 +1,15 @@
+{
+  "name": "pro1x-slider.lectops",
+  "description": "Hardware keyboard slider settings for the F(x)tec Pro1-X",
+  "architecture": "all",
+  "title": "Slider Settings",
+  "hooks": {
+    "slider-settings": {
+      "apparmor": "slider-settings.apparmor",
+      "desktop": "slider-settings.desktop"
+    }
+  },
+  "version": "0.3.0",
+  "maintainer": "Lectops",
+  "framework": "ubuntu-touch-24.04-2.x"
+}

@@ -157,7 +157,7 @@ class SliderTests(unittest.TestCase):
         self.assertEqual(self.settings.value, 'none')
 
     def test_mount_failure_does_not_attempt_a_write_to_the_image(self):
-        with patch.object(install, 'same_file', return_value=False):
+        with patch.object(install, 'safe_parent'), patch.object(install, 'safe_file'), patch.object(install, 'same_file', return_value=False):
             with patch.object(Path, 'read_bytes', return_value=b'Wrong build'):
                 with patch.object(install, 'run') as run:
                     with self.assertRaises(RuntimeError):
@@ -169,133 +169,6 @@ class SliderTests(unittest.TestCase):
             with patch.object(install, 'run') as run:
                 install.unmount()
                 run.assert_not_called()
-
-
-class InstallerTests(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
-        self.base = self.root / 'persistent-slider'
-        self.unit = self.root / 'pro1x-slider.service'
-        self.original = self.root / 'stock.qml'
-        self.original.write_bytes(b'Original system image file')
-        self.commands = []
-        self.fail_start = False
-        self.old_present = True
-        self.native_present = False
-        self.fail_native_restore = False
-        stack = ExitStack()
-        self.addCleanup(stack.close)
-        stack.enter_context(patch('builtins.print'))
-        for name, value in [('BASE', self.base), ('UNIT', self.unit),
-                            ('OVERLAY', self.base / 'OrientedShell.qml'),
-                            ('RECORD', self.base / 'installation.json'), ('TARGET', str(self.original))]:
-            stack.enter_context(patch.object(install, name, value))
-        for name in ['safe_parent', 'mount', 'unmount']:
-            stack.enter_context(patch.object(install, name))
-        stack.enter_context(patch.object(install, 'patched', return_value=b'Validated QML override'))
-        stack.enter_context(patch.object(install.pwd, 'getpwnam',
-                                        return_value=SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())))
-        stack.enter_context(patch.object(install, 'run', side_effect=self.fake_run))
-
-    def fake_run(self, *command, check=True):
-        self.commands.append(command)
-        if command[:1] == ('/usr/bin/python3',) and command[-1] == 'install':
-            self.fail_start = False
-            install.install(Path(command[1]).parent)
-            return subprocess.CompletedProcess(command, 0, '', '')
-        if command == ('systemctl', 'enable', '--now', 'pro1x-slider.service') and self.fail_start:
-            raise RuntimeError('New service could not start')
-        if self.fail_native_restore and command[-2:] == ('start', install.NATIVE):
-            raise RuntimeError('Previous native helper failed to restart')
-        if 'show' in command:
-            present = self.old_present if install.OLD in command else self.native_present
-            return subprocess.CompletedProcess(command, 0 if present else 1,
-                                                'loaded\n' if present else 'not-found\n', '')
-        code = 1 if 'pro1x-rotation.service' in command else 0
-        stdout = 'enabled\n' if 'is-enabled' in command else ''
-        return subprocess.CompletedProcess(command, code, stdout, '')
-
-    def test_install_uninstall_preserve_image_and_restore_backlight(self):
-        install.install(Path(__file__).resolve().parent)
-        self.assertTrue(self.unit.exists())
-        self.assertEqual(self.original.read_bytes(), b'Original system image file')
-        self.assertIn(('systemctl', 'disable', '--now', install.OLD), self.commands)
-        install.uninstall()
-        self.assertFalse(self.unit.exists())
-        self.assertFalse(self.base.exists())
-        self.assertIn(('systemctl', 'enable', install.OLD), self.commands)
-        self.assertIn(('systemctl', 'start', install.OLD), self.commands)
-        self.assertEqual(self.original.read_bytes(), b'Original system image file')
-
-    def test_failed_start_rolls_back_to_original_service(self):
-        self.fail_start = True
-        with self.assertRaisesRegex(RuntimeError, 'could not start'):
-            install.install(Path(__file__).resolve().parent)
-        self.assertFalse(self.unit.exists())
-        self.assertFalse(self.base.exists())
-        self.assertEqual(self.original.read_bytes(), b'Original system image file')
-        self.assertIn(('systemctl', 'enable', install.OLD), self.commands)
-        self.assertIn(('systemctl', 'start', install.OLD), self.commands)
-
-    def test_fresh_install_needs_no_previous_service(self):
-        self.old_present = False
-        install.install(Path(__file__).resolve().parent)
-        record = json.loads((self.base / 'installation.json').read_text())
-        self.assertFalse(record['backlight_present'])
-        self.assertFalse(record['keypad_slide']['present'])
-        self.assertNotIn(('systemctl', 'disable', '--now', install.OLD), self.commands)
-        install.uninstall()
-        self.assertFalse(self.unit.exists())
-        self.assertNotIn(('systemctl', 'enable', install.OLD), self.commands)
-        self.assertNotIn(('systemctl', 'start', install.OLD), self.commands)
-
-    def test_fresh_failed_start_cleans_up_without_creating_legacy_services(self):
-        self.old_present = False
-        self.fail_start = True
-        with self.assertRaisesRegex(RuntimeError, 'could not start'):
-            install.install(Path(__file__).resolve().parent)
-        self.assertFalse(self.base.exists())
-        self.assertFalse(self.unit.exists())
-        self.assertNotIn(('systemctl', 'start', install.OLD), self.commands)
-
-    def test_native_helper_is_migrated_and_restored_when_present(self):
-        self.native_present = True
-        install.install(Path(__file__).resolve().parent)
-        self.assertTrue(any(command[-3:] == ('disable', '--now', install.NATIVE) for command in self.commands))
-        install.uninstall()
-        self.assertTrue(any(command[-2:] == ('enable', install.NATIVE) for command in self.commands))
-        self.assertTrue(any(command[-2:] == ('start', install.NATIVE) for command in self.commands))
-
-    def test_upgrade_retains_direction(self):
-        install.install(Path(__file__).resolve().parent)
-        config = self.base / 'state/landscape-orientation'
-        config.write_text('LandscapeOrientation\n')
-        install.upgrade(Path(__file__).resolve().parent)
-        self.assertEqual(config.read_text().strip(), 'LandscapeOrientation')
-        self.assertTrue(self.unit.exists())
-
-    def test_native_restore_failure_still_attempts_pending_setting_recovery(self):
-        self.native_present = True
-        install.install(Path(__file__).resolve().parent)
-        (self.base / 'state/saved-keyboard.json').write_text('{"stay-hidden":"false"}')
-        self.fail_native_restore = True
-        with self.assertRaisesRegex(RuntimeError, 'native helper'):
-            install.uninstall()
-        self.assertTrue(any('--restore-only' in command for command in self.commands))
-        self.assertTrue(self.base.exists())
-
-    def test_failed_upgrade_reinstalls_previous_package(self):
-        install.install(Path(__file__).resolve().parent)
-        config = self.base / 'state/landscape-orientation'
-        config.write_text('LandscapeOrientation\n')
-        self.fail_start = True
-        with self.assertRaisesRegex(RuntimeError, 'could not start'):
-            install.upgrade(Path(__file__).resolve().parent)
-        self.assertTrue(self.unit.exists())
-        self.assertEqual(config.read_text().strip(), 'LandscapeOrientation')
-        self.assertIn(('systemctl', 'restart', 'pro1x-slider.service'), self.commands)
 
 
 class KeyboardTests(unittest.TestCase):

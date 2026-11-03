@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: GPL-3.0-only
 [Unit]
-Description=Pro1 X slider backlight and orientation
+Description=Pro1 X slider settings watcher
 RequiresMountsFor=/userdata/system-data/pro1x-slider
-After=systemd-udev-trigger.service
-Before=display-manager.service
+# Both units are enabled independently. Ordering waits at boot without starting
+# or retrying the privileged overlay when only this watcher is restarted.
+After=systemd-udev-trigger.service pro1x-slider-platform.service
 StartLimitIntervalSec=0
 
 [Service]
@@ -13,9 +14,7 @@ Group=phablet
 SupplementaryGroups=android_input plugdev
 Environment=PYTHONUNBUFFERED=1
 Environment=SLIDER_STATE_DIR=/userdata/system-data/pro1x-slider/state
-ExecStartPre=-+/usr/bin/python3 /userdata/system-data/pro1x-slider/install.py mount
 ExecStart=/usr/bin/python3 /userdata/system-data/pro1x-slider/slider.py
-ExecStopPost=-+/usr/bin/python3 /userdata/system-data/pro1x-slider/install.py unmount
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=35

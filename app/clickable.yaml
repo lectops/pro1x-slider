@@ -1,0 +1,6 @@
+builder: pure
+framework: ubuntu-touch-24.04-2.x
+ignore:
+  - clickable.yaml
+  - __pycache__
+  - '*.pyc'

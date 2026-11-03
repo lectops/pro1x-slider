@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.3.0 — 2026-11-03
+
+- Bundle the native confined Slider Settings app with the complete slider package.
+- Configure master pause, independent features, 0–100% brightness, direction, and defaults without sudo or restarts.
+- Reconcile settings while open and report saved, pending, applied, unavailable, and recovery states.
+- Validate app/backend preferences independently and retain a durable last accepted configuration.
+- Journal ownership across crashes and preserve external changes until the next physical slider cycle.
+- Separate the privileged boot-time overlay from the phablet watcher.
+- Preserve legacy direction/helper baselines, with matching-reader recovery and retained rollback evidence on failure.
+- Supply the phone user's fixed home/session environment to native Click hooks and show successful-command warnings for diagnosis.
+- Expand portable coverage to 98 tests. Native acceptance details are recorded in `docs/VALIDATION.md`.
+
 ## v0.2.0 — 2026-11-03
 
 - Install all slider features together on a fresh phone; no backlight prerequisite.

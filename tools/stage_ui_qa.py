@@ -1,0 +1,229 @@
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-only
+"""Stage an isolated native-render QA harness; optionally run it over SSH.
+
+The staged bridge is a memory-only fixture. No hardware, settings service,
+configuration/status files, Click package, or AppArmor profile is changed.
+"""
+import argparse
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+import uuid
+
+SOURCE = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SOURCE))
+from build_click import stage_app
+
+
+FIXTURE_BRIDGE = '''# Staging-only memory fixture: no file or device I/O.
+import copy
+import time
+
+_config = {"schema_version": 1, "revision": "visual-qa", "enabled": True,
+           "backlight": {"enabled": True, "brightness_percent": 70},
+           "rotation": {"enabled": True, "direction": "keyboard"},
+           "keyboard": {"hide_when_open": True}}
+
+def snapshot():
+    config = copy.deepcopy(_config)
+    return {"config": config, "backend": "running", "error": None,
+            "status": {"schema_version": 1, "protocol_version": 1,
+                "backend_version": "0.3.0", "instance_id": "visual-fixture",
+                "heartbeat_monotonic": time.monotonic(),
+                "observed_revision": config["revision"],
+                "applied_revision": config["revision"], "slider": "open",
+                "state": "active", "config": copy.deepcopy(config),
+                "config_error": None,
+                "capabilities": {name: True for name in ("backlight", "rotation", "keyboard")},
+                "features": {name: {"state": "active", "message": ""}
+                             for name in ("backlight", "rotation", "keyboard")},
+                "platform": {"overlay": "mounted", "reload_required": None}}}
+
+def resume():
+    return snapshot()
+
+def save_patch(patch):
+    for key, value in patch.items():
+        if isinstance(value, dict):
+            _config[key].update(value)
+        else:
+            _config[key] = value
+    return snapshot()
+
+def reset_defaults():
+    return snapshot()
+
+def probe():
+    return {"ok": False, "error": "Visual fixture cannot run the confinement probe"}
+'''
+
+HARNESS = r'''// Staging-only real-compositor screenshot harness.
+import QtQuick 2.12
+import QtQuick.Window 2.2
+import Lomiri.Components 1.3
+import "qml" as App
+
+Window {
+    id: window
+    visible: true
+    width: units.gu(45)
+    height: units.gu(80)
+    color: "white"
+    title: "Slider Settings visual QA"
+    Item {
+        id: viewport
+        anchors.centerIn: parent
+        width: units.gu(40)
+        height: units.gu(80)
+        Rectangle { anchors.fill: parent; color: "white" }
+        App.Main { id: app; anchors.fill: parent }
+    }
+    function positionScroll(item, atBottom) {
+        if (typeof item.contentY !== "undefined") item.contentY = atBottom ? Math.max(0, item.contentHeight - item.height) : 0
+        for (var index = 0; index < item.children.length; index++) positionScroll(item.children[index], atBottom)
+    }
+    function capture(name, next, atBottom) {
+        var filename = Qt.resolvedUrl(name).toString().replace(/^file:\/\//, "")
+        positionScroll(app, atBottom || false)
+        viewport.grabToImage(function(result) {
+            var ok = result.saveToFile(filename)
+            console.log("SLIDER_UI_QA " + JSON.stringify({file: filename, ok: ok, width: app.width, height: app.height}))
+            if (!ok) Qt.quit()
+            else next()
+        })
+    }
+    Timer {
+        interval: 3000; running: true; repeat: true
+        onTriggered: {
+            if (!app.ready || !app.config) return
+            stop()
+            window.capture("portrait.png", function() {
+                window.capture("portrait-bottom.png", function() {
+                    viewport.width = units.gu(80)
+                    viewport.height = units.gu(40)
+                    landscape.start()
+                }, true)
+            })
+        }
+    }
+    Timer {
+        id: landscape
+        interval: 1000
+        onTriggered: window.capture("landscape.png", function() {
+            window.capture("landscape-controls.png", function() { Qt.quit() }, true)
+        })
+    }
+}
+'''
+
+NATIVE_RUNNER = '''#!/usr/bin/python3
+"""Launch only the isolated fixture on the current user's native compositor."""
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+
+work = Path(__file__).resolve().parent
+environment = dict(os.environ)
+source_pid = None
+for process in Path("/proc").iterdir():
+    if not process.name.isdigit():
+        continue
+    try:
+        if process.stat().st_uid != os.getuid():
+            continue
+        command = (process / "cmdline").read_bytes().split(b"\\0")
+        if not any(Path(item.decode(errors="replace")).name == "maliit-server" for item in command if item):
+            continue
+        values = dict(item.split(b"=", 1) for item in (process / "environ").read_bytes().split(b"\\0") if b"=" in item)
+        for key, value in values.items():
+            name = key.decode()
+            if name.startswith(("MIR_", "QT_", "QML", "XDG_", "WAYLAND_", "DBUS_", "UBUNTU_", "LOMIRI_")) or name in ("LD_LIBRARY_PATH", "GRID_UNIT_PX"):
+                environment[name] = value.decode()
+        source_pid = process.name
+        break
+    except (OSError, ValueError):
+        continue
+if source_pid is None:
+    raise SystemExit("Could not read this user's running maliit-server display environment")
+if environment.get("QT_QPA_PLATFORM") in ("offscreen", "minimal", "minimalegl"):
+    raise SystemExit("Refusing an offscreen/minimal backend: native rendering is required")
+environment.update({"XDG_CONFIG_HOME": str(work / "sandbox/config"),
+                    "XDG_CACHE_HOME": str(work / "sandbox/cache"),
+                    "XDG_DATA_HOME": str(work / "sandbox/data"),
+                    "GSETTINGS_BACKEND": "memory", "QML_DISABLE_DISK_CACHE": "1",
+                    "PYTHONDONTWRITEBYTECODE": "1"})
+for directory in ("sandbox/config", "sandbox/cache", "sandbox/data"):
+    (work / directory).mkdir(parents=True, exist_ok=True)
+binary = shutil.which("qmlscene")
+if binary is None:
+    raise SystemExit("qmlscene is unavailable")
+try:
+    run = subprocess.run([binary, str(work / "Harness.qml")], cwd=work, env=environment,
+                         text=True, capture_output=True, timeout=30)
+    log = run.stdout + run.stderr
+    code = run.returncode
+except subprocess.TimeoutExpired as error:
+    log = (error.stdout or b"").decode(errors="replace") if isinstance(error.stdout, bytes) else (error.stdout or "")
+    log += (error.stderr or b"").decode(errors="replace") if isinstance(error.stderr, bytes) else (error.stderr or "")
+    code = 124
+(work / "native-render.log").write_text(log)
+report = {"returncode": code, "display_source_pid": source_pid,
+          "qpa_platform": environment.get("QT_QPA_PLATFORM"),
+          "fixture_bridge": True,
+          "captures": {name: (work / name).exists() for name in ("portrait.png", "portrait-bottom.png", "landscape.png", "landscape-controls.png")}}
+(work / "capture-result.json").write_text(json.dumps(report, indent=2) + "\\n")
+print(json.dumps(report, indent=2))
+print(log)
+raise SystemExit(0 if code == 0 and all(report["captures"].values()) else 1)
+'''
+
+
+def stage(destination):
+    destination = stage_app(SOURCE, destination)
+    (destination / "python/gui_bridge.py").write_text(FIXTURE_BRIDGE)
+    main = destination / "qml/Main.qml"
+    main.write_text(main.read_text().replace('applicationName: "pro1x-slider.lectops"',
+                                            'applicationName: "pro1x-slider-uiqa.lectops"'))
+    (destination / "Harness.qml").write_text(HARNESS)
+    (destination / "capture-native.py").write_text(NATIVE_RUNNER)
+    compile(FIXTURE_BRIDGE, "fixture gui_bridge.py", "exec")
+    compile(NATIVE_RUNNER, "capture-native.py", "exec")
+    return destination
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("destination", type=Path)
+    parser.add_argument("--host", help="SSH alias; use only with a connected, awake phone")
+    parser.add_argument("--identity", type=Path, default=Path.home() / ".ssh/pro1x_ed25519")
+    parser.add_argument("--known-hosts", type=Path, default=Path.home() / ".ssh/pro1x_known_hosts")
+    parser.add_argument("--host-key-alias", default="pro1x")
+    args = parser.parse_args()
+    destination = stage(args.destination)
+    print("Staged native fixture:", destination, flush=True)
+    if not args.host:
+        print("Copy this directory to the phone, then run: python3 capture-native.py")
+        return
+    remote = "/home/phablet/slider-ui-qa-" + uuid.uuid4().hex[:10]
+    connection = ["-i", str(args.identity), "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes",
+                  "-o", "ConnectTimeout=10", "-o", "HostKeyAlias=" + args.host_key_alias,
+                  "-o", "UserKnownHostsFile=" + str(args.known_hosts)]
+    subprocess.run(["scp", *connection, "-r", str(destination), args.host + ":" + remote], check=True, timeout=35)
+    command = "python3 " + shlex.quote(remote + "/capture-native.py")
+    run = subprocess.run(["ssh", *connection, args.host, command], text=True, capture_output=True, timeout=40)
+    print(run.stdout + run.stderr, flush=True)
+    captures = destination / "captures"
+    captures.mkdir(exist_ok=True)
+    for name in ("portrait.png", "portrait-bottom.png", "landscape.png", "landscape-controls.png", "native-render.log", "capture-result.json"):
+        subprocess.run(["scp", *connection, args.host + ":" + remote + "/" + name, str(captures / name)], timeout=35)
+    print("Remote isolated stage:", remote, flush=True)
+    print("Local results:", captures, flush=True)
+    raise SystemExit(run.returncode)
+
+
+if __name__ == "__main__":
+    main()
