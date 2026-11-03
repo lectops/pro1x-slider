@@ -45,6 +45,8 @@ python3 ~/Downloads/pro1x-slider-0.3.0.py uninstall
 
 This removes the app and background integration, restores owned OS preferences and previous slider helpers, and offers to reload Lomiri. Your Slider Settings preferences remain in your home directory for a later reinstall. Removing only the app through Ubuntu Touch leaves the watcher using its saved preferences; rerunning the complete installer restores the app.
 
+If you had a working backlight service before installation, uninstall restores it, so the light may still follow the slider. That is the previous service taking over. On a fresh installation with no custom backlight service, there is no old custom service to restore.
+
 ## Using Slider Settings
 
 - **Slider automation:** pause all features and restore preferences owned by the watcher. Individual feature choices are kept.

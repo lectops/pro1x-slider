@@ -21,7 +21,7 @@ The combined service was enabled and active after a phone reboot. Its main proce
 
 The native `com.lomiri.keyboard.maliit stay-hidden` setting was then tested in a live slider-watching trial. The owner confirmed that the browser's on-screen keyboard stayed hidden while open and that the trial behavior worked. Logs recorded open/true and closed/false transitions. The previous keyboard preference was false and was restored when closed.
 
-Version 0.2.0 added that behavior to the permanent watcher and bundled a complete fresh install into one Python file. These earlier hardware observations do not establish acceptance of the v0.3 settings app or upgraded watcher. The fresh-install and upgrade paths have fixture coverage; a physical fresh wipe/reflash has not been performed, and no second phone has been tested.
+Version 0.2.0 added that behavior to the permanent watcher and bundled a complete fresh install into one Python file. These earlier hardware observations do not establish acceptance of the v0.3 settings app or upgraded watcher. Fresh-install and upgrade paths have fixture coverage; the later clean package reinstall is recorded below. A physical wipe/reflash has not been performed, and no second phone has been tested.
 
 ## Version 0.3 native checks
 
@@ -41,7 +41,23 @@ The real native QML/PyOtherSide/production-bridge regression passes in isolated 
 
 Hardware inspection corrects the earlier brightness assumption. The bound driver is `/sys/bus/platform/drivers/leds-gpio`, with device-tree `compatible=gpio-leds` and a GPIO-backed `button-backlight` node. This older kernel reports `max_brightness=255`, but the [GPIO LED driver maps zero to off and every nonzero value to on](https://github.com/torvalds/linux/blob/master/drivers/leds/leds-gpio.c). The package now reports `backlight_dimming=false`, drives full-on/off independently of retained experimental percentages, and hides unsupported dimming controls. Native portrait/landscape fixture captures of the corrected presentation pass: the light toggle and on/off-only helper are present, with no percentage or slider. The corrected complete package is installed: both backend and GUI bytes match the bundle, the live status explicitly reports no dimming, all requested feature states reconcile, and the fresh native GUI process loads the corrected files. With the slider closed, status is idle and the LED is 0. No claim of physical dimming is made.
 
-Native Click replacement leaves an already running app process alive on this image; its normal app-stop command can also return success without terminating it. Explicitly stopping the app's transient systemd user unit terminates the stale process, and reopening loads current files. The installer now performs and verifies that step before package changes, including identical-payload upgrades. The corrected installer was then exercised on the real phone: the old GUI process is absent after upgrade, no rollback directory remains, and both new services are enabled and active. A later app launch uses a fresh native process. Ordering and failure handling are also covered in fixtures. It never auto-launches the GUI. A new v0.3 reboot test and privileged full removal have not been performed.
+Native Click replacement leaves an already running app process alive on this image; its normal app-stop command can also return success without terminating it. Explicitly stopping the app's transient systemd user unit terminates the stale process, and reopening loads current files. The installer now performs and verifies that step before package changes, including identical-payload upgrades. The corrected installer was then exercised on the real phone: the old GUI process is absent after upgrade, no rollback directory remains, and both new services are enabled and active. A later app launch uses a fresh native process. Ordering and failure handling are also covered in fixtures. It never auto-launches the GUI.
+
+## Complete removal and clean package reinstall
+
+The owner ran the v0.3 uninstaller. Inspection confirmed that the Click registration, installation directory, and both package units were gone, and the system QML had its pinned stock checksum. The pre-existing standalone `pro1x-backlight.service` was enabled/running again, as recorded by the original installation receipt. Its continued light handling was restoration of the old setup, not a leftover v0.3 watcher.
+
+For a fresh-package test, the old custom backlight/rotation services and code, development stages, test apps, saved app preferences, caches, shortcuts, and old installers were then removed. The OS-supplied `keypad-slide.service` was preserved and returned to its vendor preset. SSH, Tailscale, and unrelated phone data were retained.
+
+After restarting the phone, the owner downloaded and installed the public v0.3.0 package and confirmed that everything works. Its downloaded installer checksum matches the release:
+
+```text
+ee1a5e72db9affc9beaa2a402e9bd9f6e6747c5ac991f5e1f5a0dc57cd0064de
+```
+
+The new receipt records `backlight_present=false`, both previous backlight states false, and `config_migration=defaults`. The stock helper was present/enabled before installation and is disabled while the package manages the slider. Both package units are enabled/active. Status heartbeats advance within the freshness window, the requested revision is applied, and the native GUI runs under its enforced app profile with the same protocol module as the backend. With the slider closed, the light is 0, exact orientation is `none`, `stay-hidden` is false, and no recovery journals or rollback directories remain. The only remaining slider files in the home directory are the working app's data/launcher and the public installer retained for uninstall.
+
+This verifies a clean package installation on the same phone after removing prior custom slider state. It is not a factory reset, OS reflash, or second-device result. The restart preceded installation; a post-install boot-start test of v0.3 remains unrecorded.
 
 ## Automated checks
 
@@ -94,7 +110,6 @@ Use `--bridge-check` when staging a separate directory to exercise the productio
 ## Checks still unrecorded
 
 - A v0.3 reboot and explicit suspend/resume stress test.
-- Privileged complete v0.3 removal and a fresh physical install.
 - A separate manual test with the normal rotation-lock toggle enabled. This has automated QML coverage.
 - App-specific layouts and external displays.
 - A complete wipe/reflash followed by the fresh package install.
