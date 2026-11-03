@@ -90,7 +90,7 @@ Echo observed_revision when validated; applied_revision only when the requested 
 
 ## GUI bridge (`app/python/gui_bridge.py`)
 
-- `snapshot()` returns `{config, status, backend, error}`. backend is checking/running/stale/missing/incompatible. Use asynchronous PyOtherSide calls.
+- `snapshot()` returns `{config, status, backend, error, dimming_known}`. backend is checking/running/stale/missing/incompatible. Use asynchronous PyOtherSide calls.
 - `save_patch(patch)` merges only known config fields, assigns a new revision, validates, atomically saves, and returns snapshot.
 - QML numbers cross PyOtherSide as doubles. The bridge normalizes finite whole-number brightness values to integers before validation; fractions, booleans, non-finite values, and out-of-range values remain invalid. Disk/backend configuration stays strictly typed.
 - `reset_defaults()` writes a fresh default config, then returns snapshot.
