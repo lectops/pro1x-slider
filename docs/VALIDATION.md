@@ -18,11 +18,13 @@ The hardware checks were performed on 3 November 2026. The owner confirmed that 
 
 The combined service was enabled and active after a phone reboot. Its main process started about 11 seconds into that boot. The old backlight service was disabled, and logs showed both handlers responding to open and close events.
 
-The public source is an export of that working implementation, with the corrected direction as the default, license headers, and standalone documentation. It has not been installed on a second phone.
+The native `com.lomiri.keyboard.maliit stay-hidden` setting was then tested in a live slider-watching trial. The owner confirmed that the browser's on-screen keyboard stayed hidden while open and that the trial behavior worked. Logs recorded open/true and closed/false transitions. The previous keyboard preference was false and was restored when closed.
+
+Version 0.2.0 adds that behavior to the permanent watcher, supports a fresh install without a previous backlight service, and bundles everything into one downloadable Python file. The fresh-install and upgrade paths have automated fixture coverage; a physical fresh wipe/reflash has not been performed. It has not been installed on a second phone.
 
 ## Automated checks
 
-All 17 Python tests passed on the phone and on the development Mac. They exercise normal transitions, saved preferences, watcher restart/crash recovery, unavailable settings services, independent handler failures, corrupt state, direction changes, build guards, and install/uninstall rollback in temporary fixtures.
+All 32 current Python tests passed on the phone and development Mac. They add native keyboard preference recovery, independent restore failures, fresh installs without previous services, optional native-helper migration, upgrade rollback, and self-contained installer extraction. The new package checks run without root or real service changes. On the phone, the checks ran from source extracted by the single-file installer.
 
 The complete generated QML passed Qt 5 `qmllint` on the phone. An offscreen Qt harness runs the actual generated orientation bindings and the real GSettings plugin using `GSETTINGS_BACKEND=memory`. The run reported five passes, including setup and cleanup, covering both landscape directions, restoration of a previously locked portrait orientation, and restoration of automatic rotation to the latest orientation.
 
@@ -33,7 +35,7 @@ Systemd verification passed. The tested phone emitted an existing unrelated warn
 From the repository root, the portable tests are:
 
 ```sh
-python3 -m unittest -v test_slider.py
+python3 -m unittest -v test_slider.py test_package.py
 sh -n install-phone.sh
 ```
 
@@ -54,13 +56,13 @@ python3 phone_checks.py --qt-prefix ~/.cache/pro1x-slider-qt-qa/root
 
 This uses an offscreen platform, software rendering, and in-memory GSettings. It does not modify the real rotation settings. The tools are only needed for validation, not for the installed service.
 
-`phone_checks.py` reads the stock system QML and expects the pinned original hash. Run it before installing the override, or after uninstalling it. An active bind mount presents the patched file at that path and will intentionally fail the stock-file guard.
+`phone_checks.py` expects the pinned stock QML hash. Before installation it reads the system file. When the bind mount is active, pass `--stock-qml /userdata/system-data/pro1x-slider/OrientedShell.original.qml` to check against the installer's saved stock copy.
 
 ## Checks still unrecorded
 
 - A separate manual test with the normal rotation-lock toggle enabled. This has automated QML coverage.
 - App-specific layouts and external displays.
-- A complete wipe/reflash followed by the included legacy setup and migration.
+- A complete wipe/reflash followed by the fresh package install.
 - Other Pro1-X units, OS builds, or devices.
 
 The original system image is kept read-only. The checksum guard and rollback paths are part of the workaround's compatibility contract.

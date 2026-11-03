@@ -72,9 +72,10 @@ def harness(text):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--qt-prefix', type=Path, default=Path('/'))
+    parser.add_argument('--stock-qml', type=Path, default=Path(TARGET))
     args = parser.parse_args()
     source = Path(__file__).resolve().parent
-    result = patched(Path(TARGET).read_bytes())
+    result = patched(args.stock_qml.read_bytes())
     prefix = args.qt_prefix
     environment = dict(os.environ, QT_QPA_PLATFORM='offscreen', QT_QUICK_BACKEND='software',
                        GSETTINGS_BACKEND='memory', QML_DISABLE_DISK_CACHE='1')
@@ -85,7 +86,7 @@ def main():
         (work / 'OrientedShell.qml').write_bytes(result)
         (work / 'tst_rotation.qml').write_text(harness(result.decode()))
         commands = [
-            ['python3', '-m', 'unittest', '-v', 'test_slider.py'],
+            ['python3', '-m', 'unittest', '-v', 'test_slider.py', 'test_package.py'],
             [str(prefix / 'usr/lib/qt5/bin/qmllint'), str(work / 'OrientedShell.qml')],
             ['systemd-analyze', 'verify', '--man=no', str(source / 'pro1x-slider.service')],
             [str(prefix / 'usr/lib/qt5/bin/qmltestrunner'), '-input', str(work / 'tst_rotation.qml'),

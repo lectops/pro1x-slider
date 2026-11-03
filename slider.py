@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""One non-grabbing slider reader, with independent light/rotation handlers."""
+"""One slider reader for independent backlight, rotation, and OSK handlers."""
 import argparse
 import fcntl
 import glob
@@ -26,13 +26,16 @@ LOG = logging.getLogger('pro1x-slider')
 
 
 class Settings:
+    def __init__(self, schema=SCHEMA, key='orientation-lock', values=ALL_ORIENTATIONS):
+        self.schema, self.key, self.values = schema, key, values
+
     def call(self, action, value=None):
         runtime = Path('/run/user') / str(os.getuid())
         if not (runtime / 'bus').exists():
             raise RuntimeError('Waiting for the desktop session bus')
         env = dict(os.environ, XDG_RUNTIME_DIR=str(runtime),
                    DBUS_SESSION_BUS_ADDRESS='unix:path=' + str(runtime / 'bus'))
-        cmd = ['/usr/bin/gsettings', action, SCHEMA, 'orientation-lock']
+        cmd = ['/usr/bin/gsettings', action, self.schema, self.key]
         if value is not None:
             cmd.append(value)
         result = subprocess.run(cmd, env=env, text=True, capture_output=True, timeout=5)
@@ -43,19 +46,20 @@ class Settings:
 
     def get(self):
         value = self.call('get')
-        if value not in ALL_ORIENTATIONS:
-            raise RuntimeError('Unexpected orientation setting: ' + value)
+        if value not in self.values:
+            raise RuntimeError('Unexpected ' + self.key + ' setting: ' + value)
         return value
 
     def set(self, value):
         self.call('set', value)
         if self.get() != value:
-            raise RuntimeError('Orientation setting did not persist')
+            raise RuntimeError(self.key + ' setting did not persist')
 
 
-class Rotation:
-    def __init__(self, settings, journal, orientation, guard=None):
-        self.settings, self.journal, self.orientation = settings, Path(journal), orientation
+class SavedSetting:
+    def __init__(self, settings, journal, target, key, values, targets, guard=None):
+        self.settings, self.journal, self.target = settings, Path(journal), target
+        self.key, self.values, self.targets = key, values, targets
         self.guard = guard
         self.saved = None
         self.loaded = False
@@ -64,9 +68,9 @@ class Rotation:
         if self.loaded:
             return
         if self.journal.exists():
-            saved = json.loads(self.journal.read_text())['orientation-lock']
-            if saved not in ALL_ORIENTATIONS:
-                raise RuntimeError('Invalid saved orientation')
+            saved = json.loads(self.journal.read_text())[self.key]
+            if saved not in self.values:
+                raise RuntimeError('Invalid saved ' + self.key)
             self.saved = saved
         self.loaded = True
 
@@ -75,16 +79,16 @@ class Rotation:
         if opened:
             if self.guard:
                 self.guard()
-            orientation = self.orientation() if callable(self.orientation) else self.orientation
-            if orientation not in ORIENTATIONS:
-                raise RuntimeError('Invalid landscape direction: ' + orientation)
+            target = self.target() if callable(self.target) else self.target
+            if target not in self.targets:
+                raise RuntimeError('Invalid ' + self.key + ' target: ' + target)
             if self.saved is None:
                 saved = self.settings.get()
                 self.journal.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 temporary = self.journal.with_suffix('.tmp')
                 with temporary.open('w') as stream:
                     os.chmod(temporary, 0o600)
-                    json.dump({'orientation-lock': saved}, stream)
+                    json.dump({self.key: saved}, stream)
                     stream.flush()
                     os.fsync(stream.fileno())
                 temporary.replace(self.journal)
@@ -94,7 +98,7 @@ class Rotation:
                 finally:
                     os.close(directory)
                 self.saved = saved
-            self.settings.set(orientation)
+            self.settings.set(target)
         else:
             self.restore()
 
@@ -106,15 +110,41 @@ class Rotation:
             self.saved = None
 
 
+class Rotation(SavedSetting):
+    def __init__(self, settings, journal, orientation, guard=None):
+        super().__init__(settings, journal, orientation, 'orientation-lock',
+                         ALL_ORIENTATIONS, ORIENTATIONS, guard)
+
+
+class Keyboard(SavedSetting):
+    def __init__(self, settings, journal):
+        super().__init__(settings, journal, 'true', 'stay-hidden', ('false', 'true'), ('true',))
+
+
+def restore_settings(rotation, keyboard):
+    errors = []
+    for name, handler in [('rotation', rotation), ('osk', keyboard)]:
+        try:
+            handler.restore()
+        except Exception as error:
+            errors.append(name + ': ' + str(error))
+    if errors:
+        raise RuntimeError('; '.join(errors))
+
+
 class Controller:
-    def __init__(self, rotation, brightness=LIGHT):
+    def __init__(self, rotation, brightness=LIGHT, keyboard=None):
         self.rotation, self.brightness = rotation, Path(brightness)
+        self.keyboard = keyboard
         self.done = {}
         self.errors = {}
 
     def apply(self, opened):
-        for name, callback in [('light', lambda: self.brightness.write_text('255' if opened else '0')),
-                               ('rotation', lambda: self.rotation.apply(opened))]:
+        handlers = [('light', lambda: self.brightness.write_text('255' if opened else '0')),
+                    ('rotation', lambda: self.rotation.apply(opened))]
+        if self.keyboard is not None:
+            handlers.append(('osk', lambda: self.keyboard.apply(opened)))
+        for name, callback in handlers:
             if self.done.get(name) == opened:
                 continue
             try:
@@ -171,10 +201,12 @@ def main():
 
         rotation = Rotation(Settings(), args.state_dir / 'saved-orientation.json', orientation,
                             guard=require_overlay)
+        keyboard = Keyboard(Settings('com.lomiri.keyboard.maliit', 'stay-hidden', ('false', 'true')),
+                            args.state_dir / 'saved-keyboard.json')
         if args.restore_only:
-            rotation.restore()
+            restore_settings(rotation, keyboard)
             return
-        controller = Controller(rotation)
+        controller = Controller(rotation, keyboard=keyboard)
         stopping = False
 
         def stop(*_):
@@ -207,10 +239,10 @@ def main():
         finally:
             for attempt in range(3):
                 try:
-                    rotation.restore()
+                    restore_settings(rotation, keyboard)
                     break
                 except Exception:
-                    LOG.exception('Could not restore orientation; saved state retained for next start')
+                    LOG.exception('Could not restore settings; saved state retained for next start')
                     if attempt < 2:
                         time.sleep(1)
             # Preserve the backlight's established behavior when this service stops.

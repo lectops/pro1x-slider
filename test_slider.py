@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from slider import Controller, Rotation, Settings
+from slider import Controller, Rotation, Keyboard, Settings, restore_settings
 import install
 import qml_patch
 
@@ -147,7 +147,7 @@ class SliderTests(unittest.TestCase):
 
     def test_direction_can_change_on_the_next_open(self):
         target = ['LandscapeOrientation']
-        self.rotation.orientation = lambda: target[0]
+        self.rotation.target = lambda: target[0]
         self.controller.apply(True)
         self.controller.apply(False)
         target[0] = 'InvertedLandscapeOrientation'
@@ -182,6 +182,9 @@ class InstallerTests(unittest.TestCase):
         self.original.write_bytes(b'Original system image file')
         self.commands = []
         self.fail_start = False
+        self.old_present = True
+        self.native_present = False
+        self.fail_native_restore = False
         stack = ExitStack()
         self.addCleanup(stack.close)
         stack.enter_context(patch('builtins.print'))
@@ -198,8 +201,18 @@ class InstallerTests(unittest.TestCase):
 
     def fake_run(self, *command, check=True):
         self.commands.append(command)
+        if command[:1] == ('/usr/bin/python3',) and command[-1] == 'install':
+            self.fail_start = False
+            install.install(Path(command[1]).parent)
+            return subprocess.CompletedProcess(command, 0, '', '')
         if command == ('systemctl', 'enable', '--now', 'pro1x-slider.service') and self.fail_start:
             raise RuntimeError('New service could not start')
+        if self.fail_native_restore and command[-2:] == ('start', install.NATIVE):
+            raise RuntimeError('Previous native helper failed to restart')
+        if 'show' in command:
+            present = self.old_present if install.OLD in command else self.native_present
+            return subprocess.CompletedProcess(command, 0 if present else 1,
+                                                'loaded\n' if present else 'not-found\n', '')
         code = 1 if 'pro1x-rotation.service' in command else 0
         stdout = 'enabled\n' if 'is-enabled' in command else ''
         return subprocess.CompletedProcess(command, code, stdout, '')
@@ -225,6 +238,116 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(self.original.read_bytes(), b'Original system image file')
         self.assertIn(('systemctl', 'enable', install.OLD), self.commands)
         self.assertIn(('systemctl', 'start', install.OLD), self.commands)
+
+    def test_fresh_install_needs_no_previous_service(self):
+        self.old_present = False
+        install.install(Path(__file__).resolve().parent)
+        record = json.loads((self.base / 'installation.json').read_text())
+        self.assertFalse(record['backlight_present'])
+        self.assertFalse(record['keypad_slide']['present'])
+        self.assertNotIn(('systemctl', 'disable', '--now', install.OLD), self.commands)
+        install.uninstall()
+        self.assertFalse(self.unit.exists())
+        self.assertNotIn(('systemctl', 'enable', install.OLD), self.commands)
+        self.assertNotIn(('systemctl', 'start', install.OLD), self.commands)
+
+    def test_fresh_failed_start_cleans_up_without_creating_legacy_services(self):
+        self.old_present = False
+        self.fail_start = True
+        with self.assertRaisesRegex(RuntimeError, 'could not start'):
+            install.install(Path(__file__).resolve().parent)
+        self.assertFalse(self.base.exists())
+        self.assertFalse(self.unit.exists())
+        self.assertNotIn(('systemctl', 'start', install.OLD), self.commands)
+
+    def test_native_helper_is_migrated_and_restored_when_present(self):
+        self.native_present = True
+        install.install(Path(__file__).resolve().parent)
+        self.assertTrue(any(command[-3:] == ('disable', '--now', install.NATIVE) for command in self.commands))
+        install.uninstall()
+        self.assertTrue(any(command[-2:] == ('enable', install.NATIVE) for command in self.commands))
+        self.assertTrue(any(command[-2:] == ('start', install.NATIVE) for command in self.commands))
+
+    def test_upgrade_retains_direction(self):
+        install.install(Path(__file__).resolve().parent)
+        config = self.base / 'state/landscape-orientation'
+        config.write_text('LandscapeOrientation\n')
+        install.upgrade(Path(__file__).resolve().parent)
+        self.assertEqual(config.read_text().strip(), 'LandscapeOrientation')
+        self.assertTrue(self.unit.exists())
+
+    def test_native_restore_failure_still_attempts_pending_setting_recovery(self):
+        self.native_present = True
+        install.install(Path(__file__).resolve().parent)
+        (self.base / 'state/saved-keyboard.json').write_text('{"stay-hidden":"false"}')
+        self.fail_native_restore = True
+        with self.assertRaisesRegex(RuntimeError, 'native helper'):
+            install.uninstall()
+        self.assertTrue(any('--restore-only' in command for command in self.commands))
+        self.assertTrue(self.base.exists())
+
+    def test_failed_upgrade_reinstalls_previous_package(self):
+        install.install(Path(__file__).resolve().parent)
+        config = self.base / 'state/landscape-orientation'
+        config.write_text('LandscapeOrientation\n')
+        self.fail_start = True
+        with self.assertRaisesRegex(RuntimeError, 'could not start'):
+            install.upgrade(Path(__file__).resolve().parent)
+        self.assertTrue(self.unit.exists())
+        self.assertEqual(config.read_text().strip(), 'LandscapeOrientation')
+        self.assertIn(('systemctl', 'restart', 'pro1x-slider.service'), self.commands)
+
+
+class KeyboardTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.settings = FakeSettings('false')
+        self.keyboard = Keyboard(self.settings, self.root / 'keyboard.json')
+
+    def test_hide_when_open_restore_when_closed(self):
+        self.keyboard.apply(True)
+        self.assertEqual(self.settings.value, 'true')
+        self.keyboard.apply(False)
+        self.assertEqual(self.settings.value, 'false')
+
+    def test_preexisting_hidden_preference_is_preserved(self):
+        self.settings.value = 'true'
+        self.keyboard.apply(True)
+        self.keyboard.apply(False)
+        self.assertEqual(self.settings.value, 'true')
+
+    def test_crashed_keyboard_override_recovers_original_preference(self):
+        self.keyboard.apply(True)
+        restarted = Keyboard(self.settings, self.root / 'keyboard.json')
+        restarted.apply(True)
+        restarted.apply(False)
+        self.assertEqual(self.settings.value, 'false')
+
+    def test_keyboard_failure_does_not_block_backlight_or_rotation(self):
+        self.settings.fail = True
+        rotation_settings = FakeSettings('none')
+        rotation = Rotation(rotation_settings, self.root / 'rotation.json', 'InvertedLandscapeOrientation')
+        light = self.root / 'brightness'
+        controller = Controller(rotation, light, self.keyboard)
+        with self.assertLogs('pro1x-slider', 'ERROR'):
+            controller.apply(True)
+        self.assertEqual(light.read_text(), '255')
+        self.assertEqual(rotation_settings.value, 'InvertedLandscapeOrientation')
+        self.settings.fail = False
+        controller.apply(True)
+        self.assertEqual(self.settings.value, 'true')
+
+    def test_rotation_restore_failure_still_restores_keyboard(self):
+        rotation_settings = FakeSettings('none')
+        rotation = Rotation(rotation_settings, self.root / 'rotation.json', 'InvertedLandscapeOrientation')
+        rotation.apply(True)
+        self.keyboard.apply(True)
+        rotation_settings.fail = True
+        with self.assertRaisesRegex(RuntimeError, 'rotation'):
+            restore_settings(rotation, self.keyboard)
+        self.assertEqual(self.settings.value, 'false')
 
 
 if __name__ == '__main__':

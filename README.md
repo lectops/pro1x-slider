@@ -1,15 +1,40 @@
-# Pro1-X slider: backlight and landscape lock
+# Pro1-X slider package
 
-One systemd service for the F(x)tec Pro1-X running Ubuntu Touch: slide the keyboard open to turn on its backlight and put the screen in the useful landscape orientation. Close it to turn the light off and restore the previous rotation behavior.
+One install and one systemd service for the F(x)tec Pro1-X running Ubuntu Touch: slide the keyboard open to turn on its backlight, lock the screen to the useful landscape orientation, and hide the system on-screen keyboard while typing on hardware. Close it to turn the light off and restore the previous rotation and on-screen keyboard settings.
 
 This bind-mount workaround is confirmed on **one Pro1-X running Ubuntu Touch 24.04-2.2 stable**. The installer checks the exact Lomiri QML file before applying the override. See [validation and compatibility](docs/VALIDATION.md) for the tested build and the limits of the checks.
 
-| Keyboard | Backlight | Screen |
-| --- | --- | --- |
-| Open | On, brightness 255 | `InvertedLandscapeOrientation`, keyboard below the display |
-| Closed | Off | Previous exact-orientation setting and normal Ubuntu Touch rotation behavior |
+| Slider | Backlight | Screen | On-screen keyboard |
+| --- | --- | --- | --- |
+| Open | On, brightness 255 | Landscape, keyboard below the display | Hidden; hardware typing stays available |
+| Closed | Off | Previous rotation behavior | Previous keyboard preference restored |
 
-The service starts at boot, reads the initial slider state, and handles later slide events without grabbing keyboard input. It leaves the normal `rotation-lock` preference unchanged. Backlight and rotation failures are handled separately, and a saved-state journal supports recovery after a watcher crash.
+No previous backlight setup is required. The service starts at boot, reads the initial slider state, and handles later slide events without grabbing keyboard input. It leaves the normal `rotation-lock` preference unchanged. The three handlers fail independently, and saved-state journals support recovery after a watcher crash.
+
+## Install with one command
+
+1. On the phone, download **[pro1x-slider-0.2.0.py](https://github.com/lectops/pro1x-slider/releases/download/v0.2.0/pro1x-slider-0.2.0.py)** from the [release page](https://github.com/lectops/pro1x-slider/releases/tag/v0.2.0).
+2. Open the phone's Terminal and run:
+
+   ```sh
+   python3 ~/Downloads/pro1x-slider-0.2.0.py
+   ```
+
+Enter the phone's sudo password when prompted. The file includes all source and extracts it automatically; it does not download or install dependencies. It installs all three features together and enables them at boot. If an older version is installed, it upgrades it while keeping the selected landscape direction.
+
+At the end, it asks whether to reload Lomiri. Save open apps before answering yes: reloading closes running apps. Answer no to reboot later using the phone's power menu. No separate setup or restart command is needed.
+
+The download location may differ if the browser saved the file somewhere other than `~/Downloads`. A [SHA256SUMS](https://github.com/lectops/pro1x-slider/releases/download/v0.2.0/SHA256SUMS) file is also available with the release.
+
+### Remove with one command
+
+Keep the installer file, then run:
+
+```sh
+python3 ~/Downloads/pro1x-slider-0.2.0.py uninstall
+```
+
+It removes the package, restores the saved settings and any previously installed slider helpers, and offers to reload Lomiri.
 
 ## Compatibility
 
@@ -18,7 +43,6 @@ The service starts at boot, reads the initial slider state, and handles later sl
 - Tested Lomiri package: `0.5.0+0~20260910085057.5+ubports24.04.2~1.gbp0bd07c`.
 - User account `phablet`, with its normal `android_input` and `plugdev` groups.
 - Python 3 and standard Ubuntu Touch utilities: `systemctl`, `systemd-analyze`, `mount`, `umount`, `mountpoint`, `runuser`, and `gsettings`.
-- An existing `pro1x-backlight.service`, used as the migration baseline and rollback option. A copy and setup instructions are included under [legacy-backlight/](legacy-backlight/README.md).
 
 The required SHA-256 of `/usr/share/lomiri/OrientedShell.qml` is:
 
@@ -28,34 +52,22 @@ The required SHA-256 of `/usr/share/lomiri/OrientedShell.qml` is:
 
 Keep the checksum guard when adapting this to another build. A different QML file needs review and testing before the pinned hash changes. The installer does not install packages or require pip dependencies.
 
-## Install
+## Install from source
 
-1. Download the [v0.1.0 source archive](https://github.com/lectops/pro1x-slider/archive/refs/tags/v0.1.0.tar.gz), or clone this repo. Extract/copy the whole directory onto the phone.
-2. If `pro1x-backlight.service` is not installed yet, follow [the included backlight setup](legacy-backlight/README.md) first.
-3. In the phone's Terminal, change into the extracted repository directory and run:
+For development, download the [v0.2.0 source archive](https://github.com/lectops/pro1x-slider/archive/refs/tags/v0.2.0.tar.gz), or clone this repo. Copy/extract the whole directory onto the phone, then run from that directory:
 
    ```sh
    sh install-phone.sh
    ```
 
-   Enter the phone's sudo password. The helper runs `sudo python3 install.py install`; the final `install` argument is required.
-
-4. Save open apps, then reload Lomiri as phablet, or reboot the phone:
-
-   ```sh
-   systemctl --user restart lomiri-full-greeter.service
-   ```
-
-   Restarting Lomiri closes running apps. The QML override takes effect when the new Lomiri process loads it.
-
-5. Open and close the keyboard. Check that the light and landscape direction are correct, then inspect the service:
+The script handles sudo, installation or upgrade, and the optional interface reload. Pass `--no-reload` to skip the reload prompt. To inspect the result:
 
    ```sh
    systemctl status pro1x-slider.service
    journalctl -u pro1x-slider.service -n 30 --no-pager
    ```
 
-The installer retains the old backlight files, records whether its service was enabled/running, disables that service, and enables `pro1x-slider.service`. It refuses to overwrite an existing slider installation. If a later install is needed, uninstall the existing version first.
+The installer enables `pro1x-slider.service` on a fresh phone. If the old `pro1x-backlight.service` or built-in user `keypad-slide.service` exists, it records their enabled/running state and disables competing helpers automatically. Uninstall restores only what was there before. A failed upgrade attempts to reinstall the previous package.
 
 ### Landscape direction
 
@@ -76,7 +88,7 @@ sudo python3 /userdata/system-data/pro1x-slider/install.py uninstall
 systemctl --user restart lomiri-full-greeter.service
 ```
 
-The uninstaller restores any pending orientation setting, removes the QML bind mount and slider unit, and restores the old backlight service's recorded enabled/running state. It then removes its installation directory. If settings restoration fails because the desktop session bus is unavailable, it retains the recovery files so uninstall can be retried after logging in.
+The uninstaller restores pending orientation and on-screen keyboard settings, removes the QML bind mount and slider unit, and restores any previous helpers' recorded enabled/running state. It then removes its installation directory. If settings restoration fails because the desktop session bus is unavailable, it retains the recovery files so uninstall can be retried after logging in.
 
 ## How the bind mount works
 
@@ -84,9 +96,11 @@ This Lomiri build responds to the older `rotation-lock` boolean but does not use
 
 `install.py` verifies the original QML checksum and generates a patched copy under root-owned `/userdata/system-data/pro1x-slider/`. A bind mount places that copy over `/usr/share/lomiri/OrientedShell.qml`. The system image stays read-only, and the original file is retained under the mount.
 
-The same service prepares that mount before the display manager starts at boot, then runs the watcher as phablet. Runtime state lives in its phablet-owned `state/` subdirectory. The watcher saves the previous setting before applying an override and removes that saved state only after restoration succeeds. It queries `SW_KEYPAD_SLIDE` on `gpio-keys`: on the tested phone, 0 is open and 1 is closed.
+The same service prepares that mount before the display manager starts at boot, then runs the watcher as phablet. Runtime state lives in its phablet-owned `state/` subdirectory. The watcher saves the previous settings before applying overrides and removes saved state only after restoration succeeds. It queries `SW_KEYPAD_SLIDE` on `gpio-keys`: on the tested phone, 0 is open and 1 is closed.
 
-After an OS update, an unfamiliar QML checksum prevents the override from being mounted. The watcher keeps handling the backlight and logs the unavailable orientation override. Supporting the new build requires reviewing the patch against its QML, rather than bypassing the guard.
+While open, `com.lomiri.keyboard.maliit stay-hidden` is set to true. Closing restores its previous value, including a pre-existing preference to keep the keyboard hidden. This suppresses the system keyboard without disabling hardware key input or changing `always-show-osk`. It was confirmed in a live browser trial.
+
+After an OS update, an unfamiliar QML checksum prevents the override from being mounted. The watcher keeps handling the backlight and keyboard and logs the unavailable orientation override. Supporting the new build requires reviewing the patch against its QML, rather than bypassing the guard.
 
 There is no screen-off backlight timeout. App-specific layout behavior and external displays have not been tested.
 
@@ -95,11 +109,19 @@ There is no screen-off backlight timeout. App-specific layout behavior and exter
 The portable tests do not need root or access to phone hardware:
 
 ```sh
-python3 -m unittest -v test_slider.py
+python3 -m unittest -v test_slider.py test_package.py
 sh -n install-phone.sh
 ```
 
-They cover restoration, crash/restart recovery, handler failures, direction configuration, build guards, and installer rollback in temporary fixtures. Phone-side QML and systemd checks are described in [docs/VALIDATION.md](docs/VALIDATION.md).
+The 32 tests cover restoration, crash/restart recovery, independent handlers, fresh installs, optional migration, upgrades and rollback, and single-file extraction. Phone-side QML and systemd checks are described in [docs/VALIDATION.md](docs/VALIDATION.md).
+
+Build the downloadable installer from this source tree with:
+
+```sh
+python3 build_installer.py
+```
+
+The installer and `SHA256SUMS` are written under `dist/`. To inspect a downloaded installer's complete source without installing anything, run it with `--extract DIRECTORY`, choosing an empty directory.
 
 For a compatibility report, include the device model, Ubuntu Touch version/channel, Lomiri package version, QML checksum, and which keyboard transition fails. The known result is one tested device/build; reports from matching builds are welcome.
 
@@ -107,14 +129,15 @@ For a compatibility report, include the device model, Ubuntu Touch version/chann
 
 | File | Purpose |
 | --- | --- |
-| `slider.py` | Slider reader, backlight handler, and orientation journal |
+| `slider.py` | Slider reader and independent backlight, rotation, and keyboard handlers |
 | `qml_patch.py` | Exact-build QML transform and checksum guard |
 | `pro1x-slider.service` | Boot startup, mount preparation, and watcher |
 | `install.py` | Install, uninstall, mount, and unmount actions |
 | `install-phone.sh` | Short install entry point |
 | `test_slider.py` | Portable recovery and installer tests |
 | `phone_checks.py` | QML syntax, systemd, and offscreen Qt checks |
-| `legacy-backlight/` | Original backlight baseline and recovery instructions |
+| `build_installer.py` | Builds the self-contained installer and checksum file |
+| `test_package.py` | Complete-source extraction and installer packaging checks |
 
 ## License
 

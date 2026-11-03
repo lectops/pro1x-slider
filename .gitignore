@@ -8,4 +8,5 @@ __pycache__/
 /dist/
 installation.json
 saved-orientation.json
+saved-keyboard.json
 watcher.lock
