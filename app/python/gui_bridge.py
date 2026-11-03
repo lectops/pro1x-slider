@@ -186,6 +186,13 @@ class Bridge:
                 else:
                     if not isinstance(value, dict) or not value or set(value) - set(allowed[key]):
                         raise ValueError("Unknown or empty " + key + " setting")
+                    value = dict(value)
+                    if key == "backlight" and "brightness_percent" in value:
+                        brightness = value["brightness_percent"]
+                        # JavaScript numbers cross PyOtherSide as doubles, even
+                        # after Math.round(). Keep disk/backend schema strict.
+                        if type(brightness) is float and math.isfinite(brightness) and brightness.is_integer():
+                            value["brightness_percent"] = int(brightness)
                     config[key].update(value)
             config["revision"] = str(uuid.uuid4())
             self._last_config = save_config(self.preferences, validate_config(config))

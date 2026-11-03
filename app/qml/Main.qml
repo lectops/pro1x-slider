@@ -18,6 +18,7 @@ MainView {
     property bool refreshInFlight: false
     property bool resumedRefreshPending: false
     property string bridgeError: ""
+    property string saveError: ""
     property var model: ({config: null, status: null, backend: "checking", error: null})
     property var config: model.config
     property bool controlsEnabled: ready && config !== null && model.backend !== "incompatible" && !saving
@@ -25,6 +26,7 @@ MainView {
     function receive(result) {
         updating = true
         if (resumedRefreshPending && result.backend === "running") result.backend = "checking"
+        if (saveError && !result.error) result.error = saveError
         model = result
         brightness.value = config.backlight.brightness_percent
         updating = false
@@ -46,6 +48,7 @@ MainView {
     }
     function save(patch) {
         if (!controlsEnabled) return
+        saveError = ""
         if (brightnessDelay.running) {
             brightnessDelay.stop()
             if (!patch.backlight) patch.backlight = {}
@@ -54,15 +57,18 @@ MainView {
         saving = true
         python.call("gui_bridge.save_patch", [patch], function(result) {
             saving = false
+            if (result.error) root.saveError = result.error
             receive(result)
         })
     }
     function defaults() {
         if (!controlsEnabled) return
+        saveError = ""
         brightnessDelay.stop()
         saving = true
         python.call("gui_bridge.reset_defaults", [], function(result) {
             saving = false
+            if (result.error) root.saveError = result.error
             receive(result)
         })
     }
@@ -78,7 +84,14 @@ MainView {
         onStateChanged: if (Qt.application.state === Qt.ApplicationActive) root.refresh(true)
     }
     Timer { interval: 2000; repeat: true; running: root.ready && !root.probeMode && Qt.application.state === Qt.ApplicationActive; onTriggered: root.refresh(false) }
-    Timer { id: brightnessDelay; interval: 300; onTriggered: root.save({backlight: {brightness_percent: Math.round(brightness.value)}}) }
+    Timer {
+        id: brightnessDelay
+        interval: 300
+        onTriggered: {
+            if (brightness.pressed) restart()
+            else root.save({backlight: {brightness_percent: Math.round(brightness.value)}})
+        }
+    }
 
     Python {
         id: python
@@ -101,6 +114,10 @@ MainView {
         }
         onError: {
             console.error("Slider Settings: " + traceback)
+            if (root.saving) {
+                root.saveError = "Could not complete the settings request. " + traceback
+                root.model = {config: root.config, status: root.model.status, backend: root.model.backend, error: root.saveError}
+            }
             root.saving = false
             root.refreshInFlight = false
             root.bridgeError = "Could not complete the settings request. " + traceback
@@ -174,6 +191,7 @@ MainView {
                         Label { text: "Brightness · " + Math.round(brightness.value) + "%" }
                         Slider {
                             id: brightness
+                            objectName: "brightnessSlider"
                             width: parent.width
                             minimumValue: 0
                             maximumValue: 100
@@ -184,6 +202,7 @@ MainView {
                             Accessible.name: "Keyboard light brightness"
                             function formatValue(value) { return Math.round(value) + "%" }
                             onValueChanged: if (root.ready && !root.updating && root.config && Math.round(value) !== root.config.backlight.brightness_percent) brightnessDelay.restart()
+                            onPressedChanged: if (!pressed && root.ready && !root.updating && root.config && Math.round(value) !== root.config.backlight.brightness_percent) brightnessDelay.restart()
                             onActiveFocusChanged: if (activeFocus) root.reveal(this)
                         }
                         Label { width: parent.width; text: "0% keeps the light off. Changes also apply while the slider is open."; textSize: Label.Small; opacity: 0.8; wrapMode: Text.WordWrap }

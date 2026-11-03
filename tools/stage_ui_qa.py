@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-only
 """Stage an isolated native-render QA harness; optionally run it over SSH.
 
-The staged bridge is a memory-only fixture. No hardware, settings service,
-configuration/status files, Click package, or AppArmor profile is changed.
+The default bridge is a memory-only fixture. --bridge-check uses the production
+bridge with throwaway XDG storage. No real configuration/status, hardware,
+settings service, Click package, or AppArmor profile is changed.
 """
 import argparse
 from pathlib import Path
@@ -181,17 +182,95 @@ print(log)
 raise SystemExit(0 if code == 0 and all(report["captures"].values()) else 1)
 '''
 
+BRIDGE_HARNESS = r'''// Native production QML -> PyOtherSide -> real bridge regression.
+import QtQuick 2.12
+import QtQuick.Window 2.2
+import Lomiri.Components 1.3
+import io.thp.pyotherside 1.5
+import "qml" as App
+Window {
+    id: window
+    width: units.gu(80); height: units.gu(45); visible: true
+    property bool testReady: false
+    property var transported: null
+    property bool failureLatched: false
+    App.Main { id: app; anchors.fill: parent }
+    Python {
+        id: py
+        Component.onCompleted: {
+            addImportPath(Qt.resolvedUrl("python"))
+            importModule("transport_qa", function(ok) { window.testReady = ok })
+        }
+        onError: { console.error(traceback); Qt.quit() }
+    }
+    function findSlider(item) {
+        if (item.objectName === "brightnessSlider") return item
+        for (var index = 0; index < item.children.length; index++) {
+            var found = findSlider(item.children[index])
+            if (found) return found
+        }
+        return null
+    }
+    Timer {
+        interval: 1000; running: true; repeat: true
+        onTriggered: {
+            if (!app.ready || !app.config || !window.testReady) return
+            stop()
+            py.call("transport_qa.inspect_value", [Math.round(37.7)], function(value) {
+                window.transported = value
+                app.save({backlight: {brightness_percent: 38.5}})
+                invalidVerify.start()
+            })
+        }
+    }
+    Timer {
+        id: invalidVerify; interval: 3200
+        onTriggered: py.call("gui_bridge.snapshot", [], function(result) {
+            window.failureLatched = !!app.model.error && result.config.backlight.brightness_percent === 100
+            console.log("SLIDER_INVALID_BRIGHTNESS_QA " + JSON.stringify({latched: window.failureLatched, persisted: result.config.backlight.brightness_percent, error: app.model.error}))
+            var slider = window.findSlider(app)
+            if (!slider) { console.error("Brightness slider not found"); Qt.quit(); return }
+            slider.value = Math.round(37.7)
+            verify.start()
+        })
+    }
+    Timer {
+        id: verify; interval: 1200
+        onTriggered: py.call("gui_bridge.snapshot", [], function(result) {
+            var slider = window.findSlider(app)
+            console.log("SLIDER_BRIGHTNESS_QA " + JSON.stringify({ok: window.failureLatched && result.config.backlight.brightness_percent === 38 && slider.value === 38 && !app.model.error, transport: window.transported,
+                persisted: result.config.backlight.brightness_percent, displayed: slider.value,
+                save_error: app.model.error || null, backend: result.backend}))
+            Qt.quit()
+        })
+    }
+}
+'''
 
-def stage(destination):
+
+def stage(destination, bridge_check=False):
     destination = stage_app(SOURCE, destination)
-    (destination / "python/gui_bridge.py").write_text(FIXTURE_BRIDGE)
+    if not bridge_check:
+        (destination / "python/gui_bridge.py").write_text(FIXTURE_BRIDGE)
     main = destination / "qml/Main.qml"
     main.write_text(main.read_text().replace('applicationName: "pro1x-slider.lectops"',
                                             'applicationName: "pro1x-slider-uiqa.lectops"'))
-    (destination / "Harness.qml").write_text(HARNESS)
-    (destination / "capture-native.py").write_text(NATIVE_RUNNER)
+    (destination / "Harness.qml").write_text(BRIDGE_HARNESS if bridge_check else HARNESS)
+    runner = NATIVE_RUNNER
+    if bridge_check:
+        (destination / "python/transport_qa.py").write_text('def inspect_value(value):\n    return {"type": type(value).__name__, "value": value}\n')
+        seed = '''import sys
+sys.path.insert(0, str(work / "python"))
+from slider_common import APP_ID, default_config, save_config
+save_config(Path(environment["XDG_CONFIG_HOME"]) / APP_ID / "config.json", default_config())
+'''
+        runner = runner.replace('binary = shutil.which("qmlscene")', seed + 'binary = shutil.which("qmlscene")')
+        runner = runner.replace('"fixture_bridge": True', '"fixture_bridge": False')
+        runner = runner.replace('0 if code == 0 and all(report["captures"].values()) else 1',
+                                '''0 if code == 0 and '"ok":true' in log else 1''')
+    (destination / "capture-native.py").write_text(runner)
     compile(FIXTURE_BRIDGE, "fixture gui_bridge.py", "exec")
-    compile(NATIVE_RUNNER, "capture-native.py", "exec")
+    compile(runner, "capture-native.py", "exec")
     return destination
 
 
@@ -202,8 +281,9 @@ def main():
     parser.add_argument("--identity", type=Path, default=Path.home() / ".ssh/pro1x_ed25519")
     parser.add_argument("--known-hosts", type=Path, default=Path.home() / ".ssh/pro1x_known_hosts")
     parser.add_argument("--host-key-alias", default="pro1x")
+    parser.add_argument("--bridge-check", action="store_true", help="Exercise the production brightness save in isolated storage")
     args = parser.parse_args()
-    destination = stage(args.destination)
+    destination = stage(args.destination, args.bridge_check)
     print("Staged native fixture:", destination, flush=True)
     if not args.host:
         print("Copy this directory to the phone, then run: python3 capture-native.py")
@@ -219,6 +299,8 @@ def main():
     captures = destination / "captures"
     captures.mkdir(exist_ok=True)
     for name in ("portrait.png", "portrait-bottom.png", "landscape.png", "landscape-controls.png", "native-render.log", "capture-result.json"):
+        if args.bridge_check and name.endswith(".png"):
+            continue
         subprocess.run(["scp", *connection, args.host + ":" + remote + "/" + name, str(captures / name)], timeout=35)
     print("Remote isolated stage:", remote, flush=True)
     print("Local results:", captures, flush=True)

@@ -30,13 +30,17 @@ The QML app passes the real Qt 5 `qmllint`. It renders through the running phone
 
 An unconfined `--probe` run correctly fails: its own config/cache reads and writes succeed, but the outside scratch write is also allowed and `/proc/self/attr/current` reports `unconfined`.
 
-The registered native test package then passes under `pro1x-slider-probe.lectops_slider-settings_0.3.0 (enforce)`: own config/cache I/O succeeds and the outside write is denied. The test uses the same app/policy with an isolated package ID and throwaway filenames; it never changes real slider settings. Its registration, installation directory, and profile/cache files are absent after removal. Native cleanup emitted wrong-HOME/session-bus warnings. Production Click now receives a fixed phablet home/XDG/session environment while retaining root credentials; successful-command warnings remain visible. That corrected invocation must be verified in the combined upgrade.
+The registered native test package then passes under `pro1x-slider-probe.lectops_slider-settings_0.3.0 (enforce)`: own config/cache I/O succeeds and the outside write is denied. The test uses the same app/policy with an isolated package ID and throwaway filenames; it never changes real slider settings. Its registration, installation directory, and profile/cache files are absent after removal. Native cleanup emitted wrong-HOME/session-bus warnings. Production Click now receives a fixed phablet home/XDG/session environment while retaining root credentials; successful-command warnings remain visible.
 
-At this checkpoint, the live backend is still the earlier custom/legacy build, without the v0.3 shared module or status file. Privileged combined v0.3 upgrade, installed GUI configuration, physical open/close, and reboot acceptance are not yet recorded. This document must be updated with those results before treating v0.3 as hardware-accepted.
+The actual combined upgrade from the earlier custom/legacy installation succeeds using that corrected invocation. Both split units are active, the backend runs as phablet, all three features report available/active while open, and the main native app runs under `pro1x-slider.lectops_slider-settings_0.3.0 (enforce)`. Installed backend and GUI source bytes match the actual bundle, including both copies of the shared protocol module. Legacy direction migrates to `keyboard`; prior helper baselines remain in the receipt.
+
+After physical close, status reports closed/idle; the LED is 0, exact orientation is `none`, `stay-hidden` is false, and both preference journals are gone. The owner confirms rotation and keyboard behavior work through open/close. GUI acceptance exposed a brightness save failure: native PyOtherSide transports QML's rounded number as a Python float. The bridge now normalizes valid whole-number brightness input before strict disk/backend validation.
+
+The real native QML/PyOtherSide/production-bridge regression passes in isolated storage: rejected 38.5 leaves the old value and an error visible across refreshes; a subsequent rounded 38 arrives as a Python float and persists/displays 38 as an integer, clearing the error. Dragging defers saves until release. Installed acceptance of this corrected app remains pending. A new v0.3 reboot test and privileged full removal have not been performed.
 
 ## Automated checks
 
-All 98 Python tests pass on the development Mac, including extracted-source rebuild, installer command dispatch, native hook environment, and warning visibility. The phone also runs all 98 tests from the actual combined installer's extracted source: 97 pass and the Node-dependent QML status-display test is skipped; that test passes on the Mac. Tests use isolated fixtures and do not install services or change real phone settings.
+All 99 portable tests pass on the development Mac. The phone runs the same 99-test suite from the actual combined installer's extracted source: 98 pass and the Node-dependent QML status-display test is skipped. Coverage includes extracted-source rebuild, installer command dispatch, native hook environment, warning visibility, and QML numeric-input normalization. Tests use isolated fixtures and do not install services or change real phone settings.
 
 Coverage includes strict configuration validation, durable accepted preferences, live brightness/direction/pause changes, external preference ownership, recovery journal phases, session loss, unavailable features, heartbeat freshness, incompatible protocols, migration from actual v0.1 receipt shapes, GUI-only removal, Click lifecycle failure, full uninstall, and rollback with unresolved recovery. The single-file extraction can reproduce its installer from embedded source and the embedded Click artifact. A placeholder Click payload is used only in portable packaging fixtures.
 
@@ -80,10 +84,12 @@ python3 tools/stage_ui_qa.py /tmp/slider-ui-qa
 
 Copy that directory to the awake phone and run `python3 capture-native.py` inside it. The harness uses the current user's running Maliit display environment, isolated XDG directories, and memory GSettings. It saves four PNGs, `capture-result.json`, and `native-render.log`. Its displayed status comes from a fixture; it does not configure the real watcher. Inspect both top and bottom captures. The script also accepts `--host` with explicit SSH identity/known-host options for a development setup.
 
+Use `--bridge-check` when staging a separate directory to exercise the production QML/PyOtherSide bridge against real files in isolated XDG storage. This checks the native numeric transport and debounced brightness save, plus persistence of a rejected-save error across refresh. Its files are separate from the installed app and it does not control hardware.
+
 ## Checks still unrecorded
 
-- Privileged combined v0.3 install/update/removal with corrected native hook environment.
-- v0.3 GUI saves reaching the installed watcher while open, app suspension/closure, and reboot behavior.
+- Installed brightness fix, v0.3 app suspension/closure, and reboot behavior.
+- Privileged complete v0.3 removal and a fresh physical install.
 - A separate manual test with the normal rotation-lock toggle enabled. This has automated QML coverage.
 - App-specific layouts and external displays.
 - A complete wipe/reflash followed by the fresh package install.

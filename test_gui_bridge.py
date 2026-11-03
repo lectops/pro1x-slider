@@ -80,6 +80,8 @@ class GuiBridgeTests(unittest.TestCase):
                    {"backlight": {"brightness_percent": -1}},
                    {"backlight": {"brightness_percent": 101}},
                    {"backlight": {"brightness_percent": 10.5}},
+                   {"backlight": {"brightness_percent": float("nan")}},
+                   {"backlight": {"brightness_percent": float("inf")}},
                    {"rotation": {"direction": "automatic"}},
                    {"keyboard": {"hide_when_open": "yes"}}]
         for patch in invalid:
@@ -87,6 +89,19 @@ class GuiBridgeTests(unittest.TestCase):
                 result = self.bridge.save_patch(patch)
                 self.assertIn("not saved", result["error"])
                 self.assertEqual(self.bridge.preferences.read_bytes(), before)
+
+    def test_whole_brightness_double_from_qml_is_saved_as_a_strict_integer(self):
+        original = default_config()
+        original["rotation"]["direction"] = "reversed"
+        save_config(self.bridge.preferences, original)
+        patch = {"backlight": {"brightness_percent": 38.0}}
+        result = self.bridge.save_patch(patch)
+        self.assertIsNone(result["error"])
+        self.assertEqual(result["config"]["backlight"]["brightness_percent"], 38)
+        self.assertIs(type(result["config"]["backlight"]["brightness_percent"]), int)
+        self.assertEqual(load_config(self.bridge.preferences), result["config"])
+        self.assertEqual(result["config"]["rotation"]["direction"], "reversed")
+        self.assertIs(type(patch["backlight"]["brightness_percent"]), float)
 
     def test_bad_config_is_reported_and_only_explicit_defaults_repair_it(self):
         save_config(self.bridge.preferences, default_config())

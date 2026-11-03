@@ -90,9 +90,11 @@ Echo observed_revision when validated; applied_revision only when the requested 
 
 - `snapshot()` returns `{config, status, backend, error}`. backend is checking/running/stale/missing/incompatible. Use asynchronous PyOtherSide calls.
 - `save_patch(patch)` merges only known config fields, assigns a new revision, validates, atomically saves, and returns snapshot.
+- QML numbers cross PyOtherSide as doubles. The bridge normalizes finite whole-number brightness values to integers before validation; fractions, booleans, non-finite values, and out-of-range values remain invalid. Disk/backend configuration stays strictly typed.
 - `reset_defaults()` writes a fresh default config, then returns snapshot.
 - App can show saved/applying/applied/degraded state by comparing config.revision with status.observed_revision/applied_revision. Debounce brightness changes.
 - Controls include master pause, feature toggles, brightness, direction, status, and restore defaults. No privileged service-management buttons or arbitrary command interfaces.
+- Brightness saves after release and debounce. Failed-save errors remain visible across refreshes until the next intentional save/default action.
 
 ## Packaging and lifecycle
 

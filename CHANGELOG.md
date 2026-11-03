@@ -10,7 +10,8 @@
 - Separate the privileged boot-time overlay from the phablet watcher.
 - Preserve legacy direction/helper baselines, with matching-reader recovery and retained rollback evidence on failure.
 - Supply the phone user's fixed home/session environment to native Click hooks and show successful-command warnings for diagnosis.
-- Expand portable coverage to 98 tests. Native acceptance details are recorded in `docs/VALIDATION.md`.
+- Handle QML's whole-number doubles at the GUI boundary, defer brightness saves until release, and retain save failures across refreshes.
+- Expand portable coverage to 99 tests. Native acceptance details are recorded in `docs/VALIDATION.md`.
 
 ## v0.2.0 — 2026-11-03
 
