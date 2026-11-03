@@ -22,6 +22,8 @@ MainView {
     property var model: ({config: null, status: null, backend: "checking", error: null})
     property var config: model.config
     property bool controlsEnabled: ready && config !== null && model.backend !== "incompatible" && !saving
+    property bool dimmingAvailable: Status.canDim(model)
+    onDimmingAvailableChanged: if (!dimmingAvailable) brightnessDelay.stop()
 
     function receive(result) {
         updating = true
@@ -188,24 +190,26 @@ MainView {
                             onToggled: root.save({backlight: {enabled: value}})
                             onFocused: root.reveal(this)
                         }
-                        Label { text: "Brightness · " + Math.round(brightness.value) + "%" }
+                        Label { visible: root.dimmingAvailable; text: "Brightness · " + Math.round(brightness.value) + "%" }
                         Slider {
                             id: brightness
                             objectName: "brightnessSlider"
+                            visible: root.dimmingAvailable
                             width: parent.width
                             minimumValue: 0
                             maximumValue: 100
                             stepSize: 1
                             live: true
-                            enabled: root.controlsEnabled
+                            enabled: root.controlsEnabled && root.dimmingAvailable
                             activeFocusOnTab: true
                             Accessible.name: "Keyboard light brightness"
                             function formatValue(value) { return Math.round(value) + "%" }
-                            onValueChanged: if (root.ready && !root.updating && root.config && Math.round(value) !== root.config.backlight.brightness_percent) brightnessDelay.restart()
-                            onPressedChanged: if (!pressed && root.ready && !root.updating && root.config && Math.round(value) !== root.config.backlight.brightness_percent) brightnessDelay.restart()
+                            onValueChanged: if (root.dimmingAvailable && root.ready && !root.updating && root.config && Math.round(value) !== root.config.backlight.brightness_percent) brightnessDelay.restart()
+                            onPressedChanged: if (root.dimmingAvailable && !pressed && root.ready && !root.updating && root.config && Math.round(value) !== root.config.backlight.brightness_percent) brightnessDelay.restart()
                             onActiveFocusChanged: if (activeFocus) root.reveal(this)
                         }
-                        Label { width: parent.width; text: "0% keeps the light off. Changes also apply while the slider is open."; textSize: Label.Small; opacity: 0.8; wrapMode: Text.WordWrap }
+                        Label { visible: root.dimmingAvailable; width: parent.width; text: "0% keeps the light off. Changes also apply while the slider is open."; textSize: Label.Small; opacity: 0.8; wrapMode: Text.WordWrap }
+                        Label { visible: !root.dimmingAvailable; width: parent.width; text: Status.dimmingDetail(root.model); textSize: Label.Small; opacity: 0.8; wrapMode: Text.WordWrap }
                     }
                     Column {
                         width: panels.panelWidth
@@ -273,7 +277,7 @@ MainView {
         Dialog {
             id: resetPopup
             title: "Restore slider defaults?"
-            text: "Enable all features, set brightness to 100%, and use the keyboard landscape direction."
+            text: root.dimmingAvailable ? "Enable all features, set brightness to 100%, and use the keyboard landscape direction." : "Enable all features and use the keyboard landscape direction."
             Button { text: "Restore defaults"; color: "#4daca7"; onClicked: { PopupUtils.close(resetPopup); root.defaults() } }
             Button { text: "Cancel"; onClicked: PopupUtils.close(resetPopup) }
         }

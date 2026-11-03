@@ -12,6 +12,7 @@
 | SHA-256 | `633578d225f0dd41a656b27c08e0d5cc0901e6b6267c74c26edab8823524dec8` |
 | Slide input | `gpio-keys`, `SW_KEYPAD_SLIDE` code 10; 0 open, 1 closed |
 | Backlight | `/sys/class/leds/:kbd_backlight/brightness`, 255 open / 0 closed |
+| Backlight driver | `leds-gpio`, device-tree `gpio-leds`; on/off only |
 | Correct open orientation | `InvertedLandscapeOrientation` |
 
 The hardware checks were performed on 3 November 2026. The owner confirmed that the combined behavior worked and that the corrected landscape direction was right-side up over the keyboard. Closing the keyboard restored the exact-orientation setting to `none` on this installation. The normal `rotation-lock` preference remained untouched.
@@ -36,11 +37,15 @@ The actual combined upgrade from the earlier custom/legacy installation succeeds
 
 After physical close, status reports closed/idle; the LED is 0, exact orientation is `none`, `stay-hidden` is false, and both preference journals are gone. The owner confirms rotation and keyboard behavior work through open/close. GUI acceptance exposed a brightness save failure: native PyOtherSide transports QML's rounded number as a Python float. The bridge now normalizes valid whole-number brightness input before strict disk/backend validation.
 
-The real native QML/PyOtherSide/production-bridge regression passes in isolated storage: rejected 38.5 leaves the old value and an error visible across refreshes; a subsequent rounded 38 arrives as a Python float and persists/displays 38 as an integer, clearing the error. Dragging defers saves until release. Installed acceptance of this corrected app remains pending. A new v0.3 reboot test and privileged full removal have not been performed.
+The real native QML/PyOtherSide/production-bridge regression passes in isolated storage: rejected 38.5 leaves the old value and an error visible across refreshes; a subsequent rounded 38 arrives as a Python float and persists/displays 38 as an integer, clearing the error. Installed GUI saves also reach the watcher (13% stored, matching applied revision, sysfs value 33). This verifies the file/control path, not physical dimming: the owner reports unchanged intensity.
+
+Hardware inspection corrects the earlier brightness assumption. The bound driver is `/sys/bus/platform/drivers/leds-gpio`, with device-tree `compatible=gpio-leds` and a GPIO-backed `button-backlight` node. This older kernel reports `max_brightness=255`, but the [GPIO LED driver maps zero to off and every nonzero value to on](https://github.com/torvalds/linux/blob/master/drivers/leds/leds-gpio.c). The package now reports `backlight_dimming=false`, drives full-on/off independently of retained experimental percentages, and hides unsupported dimming controls. Native portrait/landscape fixture captures of the corrected presentation pass: the light toggle and on/off-only helper are present, with no percentage or slider. Installed acceptance of that corrected presentation remains pending. No claim of physical dimming is made.
+
+Native Click replacement leaves an already running app process alive on this image; its normal app-stop command can also return success without terminating it. Explicitly stopping the app's transient systemd user unit terminates the stale process, and reopening loads current files. The installer now performs and verifies that step before package changes, including identical-payload upgrades. This endpoint was verified on the real phone; ordering and failure handling are covered in fixtures. It never auto-launches the GUI. A new v0.3 reboot test and privileged full removal have not been performed.
 
 ## Automated checks
 
-All 99 portable tests pass on the development Mac. The phone runs the same 99-test suite from the actual combined installer's extracted source: 98 pass and the Node-dependent QML status-display test is skipped. Coverage includes extracted-source rebuild, installer command dispatch, native hook environment, warning visibility, and QML numeric-input normalization. Tests use isolated fixtures and do not install services or change real phone settings.
+All 112 portable tests pass on the development Mac. The phone runs the same 112-test suite from the actual combined installer's extracted source: 111 pass and the Node-dependent QML status-display test is skipped. Coverage includes extracted-source rebuild, installer command dispatch, native hook environment, warning visibility, and QML numeric-input normalization. Tests use isolated fixtures and do not install services or change real phone settings.
 
 Coverage includes strict configuration validation, durable accepted preferences, live brightness/direction/pause changes, external preference ownership, recovery journal phases, session loss, unavailable features, heartbeat freshness, incompatible protocols, migration from actual v0.1 receipt shapes, GUI-only removal, Click lifecycle failure, full uninstall, and rollback with unresolved recovery. The single-file extraction can reproduce its installer from embedded source and the embedded Click artifact. A placeholder Click payload is used only in portable packaging fixtures.
 
@@ -88,7 +93,7 @@ Use `--bridge-check` when staging a separate directory to exercise the productio
 
 ## Checks still unrecorded
 
-- Installed brightness fix, v0.3 app suspension/closure, and reboot behavior.
+- Installed on/off-only GUI presentation, v0.3 app suspension/closure, and reboot behavior.
 - Privileged complete v0.3 removal and a fresh physical install.
 - A separate manual test with the normal rotation-lock toggle enabled. This has automated QML coverage.
 - App-specific layouts and external displays.

@@ -205,7 +205,11 @@ class Controller:
             maximum = int(maximum_file.read_text()) if maximum_file.exists() else 255
             if not 1 <= maximum <= 65535:
                 raise RuntimeError('Invalid backlight maximum')
-            value = (maximum * config['backlight']['brightness_percent'] + 50) // 100 if opened and master and config['backlight']['enabled'] else 0
+            # The supported Pro1-X uses gpio-leds: every nonzero value is on.
+            # max_brightness is an API range, not evidence of physical dimming.
+            # Retain brightness_percent in the file protocol for draft config
+            # compatibility; the feature toggle exclusively controls this light.
+            value = maximum if opened and requested else 0
             # Read actual hardware to recover after resume or other writers.
             if not self.brightness.exists() or self.brightness.read_text().strip() != str(value):
                 self.brightness.write_text(str(value))
@@ -310,6 +314,7 @@ def make_status(store, controller, instance, opened, device_error=None):
             'slider': 'unknown' if opened is None else 'open' if opened else 'closed',
             'state': state, 'config': store.config, 'config_error': store.error,
             'capabilities': {'backlight': controller.brightness.exists(),
+                             'backlight_dimming': False,
                              'rotation': platform['overlay'] == 'mounted',
                              'keyboard': features['keyboard']['state'] not in ('error', 'unsupported')},
             'features': features, 'platform': platform}

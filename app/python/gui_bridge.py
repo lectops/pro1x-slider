@@ -78,12 +78,17 @@ def _validate_status(value):
             raise ValueError("Invalid backend " + name + " capability")
         if feature.get("state") not in FEATURE_STATES or not isinstance(feature.get("message"), str):
             raise ValueError("Invalid backend " + name + " state")
+    dimming = capabilities.get("backlight_dimming", False)
+    if type(dimming) is not bool:
+        raise ValueError("Invalid backend backlight dimming capability")
     platform = value.get("platform")
     if (not isinstance(platform, dict) or "reload_required" not in platform
             or platform.get("overlay") not in ("mounted", "unsupported", "missing", "unknown")):
         raise ValueError("Invalid backend platform report")
     if platform.get("reload_required") is not None and type(platform["reload_required"]) is not bool:
         raise ValueError("Invalid backend reload requirement")
+    value = dict(value)
+    value["capabilities"] = dict(capabilities, backlight_dimming=dimming)
     return value
 
 
@@ -122,9 +127,11 @@ class Bridge:
         except (OSError, ValueError) as failure:
             config = validate_config(self._last_config)
             error = "Could not read saved settings: " + str(failure)
-        status, backend = None, "missing"
+        status, backend, dimming_known = None, "missing", False
         try:
-            status = _validate_status(_bounded_json(self.status_file))
+            report = _bounded_json(self.status_file)
+            status = _validate_status(report)
+            dimming_known = "backlight_dimming" in report["capabilities"]
             heartbeat = status["heartbeat_monotonic"]
             marker = (status["instance_id"], heartbeat)
             age = self.clock() - heartbeat
@@ -156,7 +163,8 @@ class Bridge:
             self._last_config = validate_config(status["config"])
             self._has_baseline = True
             config = validate_config(self._last_config)
-        return {"config": config, "status": status, "backend": backend, "error": error}
+        return {"config": config, "status": status, "backend": backend, "error": error,
+                "dimming_known": dimming_known}
 
     def _failure(self, failure):
         result = self.snapshot()

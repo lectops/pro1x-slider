@@ -44,3 +44,15 @@ function feature(snapshot, name) {
     if (!snapshot.status.capabilities[name] && feature.state !== "unsupported") text += " · unavailable on this system"
     return text + (feature.message ? " · " + feature.message : "")
 }
+
+function canDim(snapshot) {
+    return snapshot.backend === "running" && !!snapshot.status && snapshot.status.capabilities.backlight_dimming === true
+}
+
+function dimmingDetail(snapshot) {
+    if (snapshot.backend !== "running" || !snapshot.status)
+        return "Dimming support is not confirmed by a fresh watcher report. Use Light when open for on/off control."
+    if (!snapshot.dimming_known)
+        return "The watcher has not reported dimming support. Use Light when open for on/off control."
+    return "This keyboard light supports on/off only. Use Light when open to control it."
+}

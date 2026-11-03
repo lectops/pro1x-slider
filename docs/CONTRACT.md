@@ -28,7 +28,7 @@ The optional `home` argument to path helpers is for fixtures; otherwise honor XD
 }
 ```
 
-Allowed directions are `keyboard` (Qt InvertedLandscapeOrientation on this device) and `reversed` (Qt LandscapeOrientation). Brightness is an integer 0..100 mapped to the LED's reported maximum. Reject malformed types (including bool as brightness), unknown schema/fields, oversized files, and invalid revisions. A save uses a fresh UUID-like opaque revision token; revisions are not ordering counters.
+Allowed directions are `keyboard` (Qt InvertedLandscapeOrientation on this device) and `reversed` (Qt LandscapeOrientation). The integer 0..100 `brightness_percent` field is retained for compatibility with development builds. It has no effect on the shipped Pro1-X binary backlight profile, including when it is 0: the feature toggle controls on/off. The driver and hardware capability, not a nonzero sysfs range, determine whether dimming can be offered. Reject malformed types (including bool as brightness), unknown schema/fields, oversized files, and invalid revisions. A save uses a fresh UUID-like opaque revision token; revisions are not ordering counters.
 
 GUI is the normal preference writer. The installer may seed or migrate config while integrating the package, using phablet ownership. The daemon validates independently, persists the last accepted config in its recovery state, and retains that config if the GUI file disappears or becomes malformed. Restore-defaults writes a new explicit config revision; it does not clear recovery journals or OS preferences.
 
@@ -61,7 +61,7 @@ Required fields:
   "state": "active",
   "config": {},
   "config_error": null,
-  "capabilities": {"backlight": true, "rotation": true, "keyboard": true},
+  "capabilities": {"backlight": true, "backlight_dimming": false, "rotation": true, "keyboard": true},
   "features": {
     "backlight": {"state": "active", "message": ""},
     "rotation": {"state": "active", "message": ""},
@@ -74,6 +74,8 @@ Required fields:
 `config` is the complete accepted config. Slider: open/closed/unknown. Overall state: starting/active/paused/degraded/recovery_needed. Feature state: active/idle/disabled/waiting/error/unsupported. Platform overlay: mounted/unsupported/missing/unknown; reload_required may be null if unknown.
 
 Echo observed_revision when validated; applied_revision only when the requested settings have reconciled successfully. A disabled/paused feature is successfully applied only after restoring its override. Unsupported requested features lead to degraded status. Status is atomic, ephemeral, and periodically refreshed; absence/staleness is never displayed as a running backend. GUI should refresh after resume and require a fresh heartbeat before trusting cached status across a launch.
+
+`backlight_dimming` is an additive capability. The Pro1-X profile reports false; absence in an older report must not imply support. Only an explicit true in a fresh compatible report allows the GUI to offer dimming. A retained percentage is an inactive preference when this capability is false, not a requested intensity awaiting application.
 
 ## Behavior
 
@@ -93,7 +95,7 @@ Echo observed_revision when validated; applied_revision only when the requested 
 - QML numbers cross PyOtherSide as doubles. The bridge normalizes finite whole-number brightness values to integers before validation; fractions, booleans, non-finite values, and out-of-range values remain invalid. Disk/backend configuration stays strictly typed.
 - `reset_defaults()` writes a fresh default config, then returns snapshot.
 - App can show saved/applying/applied/degraded state by comparing config.revision with status.observed_revision/applied_revision. Debounce brightness changes.
-- Controls include master pause, feature toggles, brightness, direction, status, and restore defaults. No privileged service-management buttons or arbitrary command interfaces.
+- Controls include master pause, feature toggles, direction, status, and restore defaults. Dimming controls require confirmed capability and are absent on this Pro1-X port. No privileged service-management buttons or arbitrary command interfaces.
 - Brightness saves after release and debounce. Failed-save errors remain visible across refreshes until the next intentional save/default action.
 
 ## Packaging and lifecycle
@@ -103,6 +105,8 @@ Echo observed_revision when validated; applied_revision only when the requested 
 `build_installer.py` requires the built `pro1x-slider.lectops_0.3.0_all.click`. The single-file output includes that artifact and complete source/tests. Test fixtures use a placeholder Click payload only inside simulated installer tests.
 
 Both systemd units are enabled independently. The watcher has `After=pro1x-slider-platform.service`, without a dependency that starts or retries it. Mount commands exist only in the platform oneshot. GUI changes never restart either unit.
+
+Before changing installed files, the installer explicitly stops a loaded native GUI transient service through the phablet session manager and verifies it stopped. This also applies when the package bytes/version are unchanged: an old process can otherwise retain old imported QML/Python after replacement. An unavailable/failed stop aborts before package changes; an absent unit is normal. It never automatically launches the GUI, so the Terminal reload prompt stays visible.
 
 Upgrade preserves state in place and seeds a missing preference file as phablet: valid last accepted configuration, then legacy direction, then defaults. Existing preferences are never overwritten by seeding. Rollback stops the replacement watcher and uses its matching recovery reader before permitting a legacy watcher to start. Unresolved journals retain the backup, recovery reader, and service-state receipt for diagnosis.
 

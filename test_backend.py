@@ -29,7 +29,7 @@ class BackendTests(unittest.TestCase):
         self.config['backlight']['brightness_percent'] = 30
         self.controller.apply(True, self.config)
         self.assertEqual(self.settings.value, 'LandscapeOrientation')
-        self.assertEqual(self.light.read_text(), '77')
+        self.assertEqual(self.light.read_text(), '255')
         self.config['enabled'] = False
         self.controller.apply(True, self.config)
         self.assertEqual(self.settings.value, 'PortraitOrientation')
@@ -40,10 +40,42 @@ class BackendTests(unittest.TestCase):
         self.light.with_name('max_brightness').write_text('15')
         self.config['backlight']['brightness_percent'] = 50
         self.controller.apply(True, self.config)
-        self.assertEqual(self.light.read_text(), '8')
+        self.assertEqual(self.light.read_text(), '15')
         self.light.write_text('0')
         self.controller.apply(True, self.config)
-        self.assertEqual(self.light.read_text(), '8')
+        self.assertEqual(self.light.read_text(), '15')
+
+    def test_gpio_light_ignores_reserved_brightness_percentage(self):
+        self.light.with_name('max_brightness').write_text('255')
+        for percent in (0, 1, 50, 100):
+            with self.subTest(percent=percent):
+                self.config['backlight']['brightness_percent'] = percent
+                self.assertTrue(self.controller.apply(True, self.config))
+                self.assertEqual(self.light.read_text(), '255')
+                self.controller.apply(False, self.config)
+                self.assertEqual(self.light.read_text(), '0')
+        self.controller.apply(True, self.config)
+        self.config['backlight']['enabled'] = False
+        self.controller.apply(True, self.config)
+        self.assertEqual(self.light.read_text(), '0')
+        self.config['backlight']['enabled'] = True
+        self.controller.apply(True, self.config)
+        self.config['enabled'] = False
+        self.controller.apply(True, self.config)
+        self.assertEqual(self.light.read_text(), '0')
+
+    def test_maximum_does_not_advertise_dimming_and_legacy_zero_config_acks(self):
+        self.config['backlight']['brightness_percent'] = 0
+        self.light.with_name('max_brightness').write_text('255')
+        self.controller.apply(True, self.config)
+        store = ConfigStore(self.root / 'state', self.root / 'config.json')
+        store.config = self.config
+        status = make_status(store, self.controller, 'test', True)
+        self.assertTrue(status['capabilities']['backlight'])
+        self.assertFalse(status['capabilities']['backlight_dimming'])
+        self.assertEqual(status['config']['backlight']['brightness_percent'], 0)
+        self.assertEqual(status['applied_revision'], self.config['revision'])
+        self.assertEqual(self.light.read_text(), '255')
 
     def test_external_change_relinquishes_until_physical_close(self):
         self.controller.apply(True, self.config)

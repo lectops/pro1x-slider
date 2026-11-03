@@ -38,6 +38,10 @@ class InstallerTests(unittest.TestCase):
         self.commands = []
         self.click_commands = []
         self.gui = None
+        self.gui_loaded = False
+        self.gui_active_state = 'inactive'
+        self.fail_gui_stop = self.fail_gui_inspection = self.gui_stop_noop = False
+        self.gui_collect_on_stop = False
         self.fail_start = self.fail_gui = self.fail_restore = self.fail_native_restore = False
         self.fail_all_starts = False
         self.fail_verify = False
@@ -65,11 +69,26 @@ class InstallerTests(unittest.TestCase):
             pw_uid=os.getuid(), pw_gid=os.getgid(), pw_dir=str(self.home))))
         stack.enter_context(patch.object(install, 'run', side_effect=self.fake_run))
 
-    def result(self, command, code=0, stdout=''):
-        return subprocess.CompletedProcess(command, code, stdout, '')
+    def result(self, command, code=0, stdout='', stderr=''):
+        return subprocess.CompletedProcess(command, code, stdout, stderr)
 
     def fake_run(self, *command, check=True):
         self.commands.append(command)
+        if install.GUI_UNIT in command:
+            if 'show' in command:
+                if self.fail_gui_inspection:
+                    return self.result(command, 1, stderr='User manager unavailable')
+                state = 'LoadState=' + ('loaded' if self.gui_loaded else 'not-found')
+                state += '\nActiveState=' + self.gui_active_state + '\n'
+                return self.result(command, 0 if self.gui_loaded else 1, state)
+            if command[-2:] == ('stop', install.GUI_UNIT):
+                if self.fail_gui_stop:
+                    raise RuntimeError('Native GUI could not stop')
+                if not self.gui_stop_noop:
+                    self.gui_active_state = 'inactive'
+                    if self.gui_collect_on_stop:
+                        self.gui_loaded = False
+                return self.result(command)
         if '/usr/bin/click' in command:
             command = ('click', *command[command.index('/usr/bin/click') + 1:])
             self.click_commands.append(command)
@@ -247,6 +266,124 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(self.gui, install.VERSION)
         self.assertEqual(state_inode, (self.base / 'state').stat().st_ino)
 
+    def test_never_launched_gui_is_normal_and_requires_no_stop(self):
+        self.install()
+        install.upgrade(self.source)
+        install.uninstall()
+        self.assertTrue(any(install.GUI_UNIT in command and 'show' in command for command in self.commands))
+        self.assertFalse(any(command[-2:] == ('stop', install.GUI_UNIT) for command in self.commands))
+
+    def test_identical_click_upgrade_still_closes_an_old_in_memory_gui(self):
+        self.install()
+        self.gui_loaded, self.gui_active_state = True, 'active'
+        before = len(self.commands)
+        install.upgrade(self.source)
+        self.assertEqual(self.gui_active_state, 'inactive')
+        self.assertTrue(any(command[-2:] == ('stop', install.GUI_UNIT) for command in self.commands[before:]))
+        self.assertEqual(len([command for command in self.click_commands if command[:2] == ('click', 'install')]), 1)
+
+    def test_upgrade_stops_gui_before_backend_writes_and_native_click_replacement(self):
+        self.install()
+        self.gui_loaded, self.gui_active_state = True, 'active'
+        (self.source / install.CLICK_NAME).write_bytes(b'replacement GUI payload')
+        before = len(self.commands)
+        original_write = install.write
+        writes = []
+        def checked_write(path, content, mode=0o644):
+            self.assertEqual(self.gui_active_state, 'inactive', str(path))
+            writes.append(path)
+            return original_write(path, content, mode)
+        with patch.object(install, 'write', side_effect=checked_write):
+            install.upgrade(self.source)
+        self.assertTrue(writes)
+        commands = self.commands[before:]
+        stop_index = next(i for i, command in enumerate(commands) if command[-2:] == ('stop', install.GUI_UNIT))
+        backend_index = commands.index(('systemctl', 'disable', '--now', install.WATCHER))
+        click_index = next(i for i, command in enumerate(commands)
+                          if '/usr/bin/click' in command and 'install' in command)
+        self.assertLess(stop_index, backend_index)
+        self.assertLess(stop_index, click_index)
+        stop = commands[stop_index]
+        self.assertEqual(stop[:6], ('runuser', '-u', 'phablet', '--', '/usr/bin/env', '-i'))
+        self.assertIn('DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/' + str(os.getuid()) + '/bus', stop)
+        self.assertFalse(any(install.GUI_UNIT in command and any(action in command for action in
+                            ('start', 'restart', 'enable')) for command in commands))
+
+    def test_gui_stop_failure_aborts_upgrade_before_any_installation_mutation(self):
+        self.install()
+        (self.base / 'state').rmdir()
+        before_files = {path.name: path.read_bytes() for path in self.base.iterdir() if path.is_file()}
+        self.gui_loaded, self.gui_active_state, self.fail_gui_stop = True, 'active', True
+        before = len(self.commands)
+        with self.assertRaisesRegex(RuntimeError, 'Native GUI could not stop'):
+            install.upgrade(self.source)
+        self.assertEqual(before_files, {path.name: path.read_bytes() for path in self.base.iterdir() if path.is_file()})
+        self.assertFalse((self.base / 'state').exists())
+        self.assertFalse(list(self.root.glob('pro1x-slider-rollback-*')))
+        self.assertFalse(any('disable' in command for command in self.commands[before:]))
+        self.assertFalse(any('/usr/bin/click' in command and 'install' in command
+                             for command in self.commands[before:]))
+
+    def test_gui_stop_failure_aborts_uninstall_before_backend_or_preferences_change(self):
+        self.install()
+        journal = self.base / 'state/saved-keyboard.json'
+        journal.write_text('pending baseline')
+        config = config_path(self.home).read_bytes()
+        self.gui_loaded, self.gui_active_state, self.fail_gui_stop = True, 'active', True
+        before = len(self.commands)
+        with self.assertRaisesRegex(RuntimeError, 'Native GUI could not stop'):
+            install.uninstall()
+        self.assertTrue(self.unit.exists() and self.platform.exists() and install.RECORD.exists())
+        self.assertEqual(journal.read_text(), 'pending baseline')
+        self.assertEqual(config_path(self.home).read_bytes(), config)
+        self.assertFalse(any('disable' in command for command in self.commands[before:]))
+        self.assertFalse(any('/usr/bin/click' in command and 'unregister' in command
+                             for command in self.commands[before:]))
+
+    def test_successful_stop_that_leaves_gui_running_aborts_before_mutation(self):
+        self.install()
+        self.gui_loaded, self.gui_active_state, self.gui_stop_noop = True, 'active', True
+        receipt = install.RECORD.read_bytes()
+        before = len(self.commands)
+        with self.assertRaisesRegex(RuntimeError, 'still running'):
+            install.upgrade(self.source)
+        self.assertEqual(install.RECORD.read_bytes(), receipt)
+        self.assertFalse(any('disable' in command for command in self.commands[before:]))
+
+    def test_inaccessible_user_manager_is_not_treated_as_never_launched_gui(self):
+        self.fail_gui_inspection = True
+        with self.assertRaisesRegex(RuntimeError, 'User manager unavailable'):
+            self.install()
+        self.assertFalse(self.base.exists())
+
+    def test_collected_transient_unit_after_stop_is_success(self):
+        self.gui_loaded, self.gui_active_state, self.gui_collect_on_stop = True, 'active', True
+        install.stop_gui()
+        self.assertFalse(self.gui_loaded)
+
+    def test_gui_only_removal_stops_transient_service_before_unregister(self):
+        self.install()
+        self.gui_loaded, self.gui_active_state = True, 'active'
+        before = len(self.commands)
+        install.remove_gui()
+        commands = self.commands[before:]
+        stop = next(i for i, command in enumerate(commands) if command[-2:] == ('stop', install.GUI_UNIT))
+        unregister = next(i for i, command in enumerate(commands)
+                          if '/usr/bin/click' in command and 'unregister' in command)
+        self.assertLess(stop, unregister)
+        self.assertEqual(self.gui_active_state, 'inactive')
+        self.assertTrue(self.base.exists() and self.unit.exists())
+
+    def test_direct_native_click_mutations_abort_when_loaded_gui_cannot_stop(self):
+        self.install()
+        self.gui_loaded, self.gui_active_state, self.fail_gui_stop = True, 'active', True
+        for operation in (lambda: install.install_gui(self.source / install.CLICK_NAME), install.remove_gui):
+            with self.subTest(operation=operation):
+                before = len(self.click_commands)
+                with self.assertRaisesRegex(RuntimeError, 'Native GUI could not stop'):
+                    operation()
+                self.assertEqual(self.click_commands[before:], [])
+
     def test_upgrade_preserves_accepted_config_checkpoint_and_journals(self):
         self.install()
         config = load_config(config_path(self.home))
@@ -403,6 +540,8 @@ class InstallerTests(unittest.TestCase):
 
     def test_failed_v03_upgrade_restores_stored_click_payload(self):
         self.install()
+        self.gui_loaded, self.gui_active_state = True, 'active'
+        before = len(self.commands)
         prior = (self.base / install.CLICK_NAME).read_bytes()
         (self.source / install.CLICK_NAME).write_bytes(b'new Click payload')
         self.fail_start = True
@@ -411,6 +550,9 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual((self.base / install.CLICK_NAME).read_bytes(), prior)
         self.assertEqual(self.gui, install.VERSION)
         self.assertEqual(len([c for c in self.click_commands if c[:2] == ('click', 'install')]), 3)
+        self.assertEqual(self.gui_active_state, 'inactive')
+        self.assertFalse(any(install.GUI_UNIT in command and any(action in command for action in
+                            ('start', 'restart', 'enable')) for command in self.commands[before:]))
 
     def test_failed_upgrade_restores_previously_disabled_watcher_state(self):
         self.install()

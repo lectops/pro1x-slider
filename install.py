@@ -24,6 +24,8 @@ PLATFORM = 'pro1x-slider-platform.service'
 OLD = 'pro1x-backlight.service'
 NATIVE = 'keypad-slide.service'
 CLICK_NAME = APP_ID + '_' + VERSION + '_all.click'
+GUI_UNIT = ('lomiri-app-launch--application-click--' + APP_ID
+            + '_slider-settings_' + VERSION + '--.service')
 FILES = ('slider.py', 'slider_common.py', 'qml_patch.py', 'install.py',
          WATCHER, PLATFORM, 'LICENSE', 'NOTICE')
 OVERLAY = BASE / 'OrientedShell.qml'
@@ -118,6 +120,25 @@ def native_click(*arguments, show_stdout=False):
 
 def user_systemctl(*arguments, check=True):
     return phablet('systemctl', '--user', *arguments, check=check)
+
+
+def stop_gui():
+    """Stop the native app service; Click's app-stop hook can leave it alive."""
+    def active_state():
+        result = user_systemctl('show', GUI_UNIT, '-p', 'LoadState', '-p', 'ActiveState', check=False)
+        state = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
+        if state.get('LoadState') == 'not-found':
+            return None
+        if result.returncode or state.get('LoadState') != 'loaded' or not state.get('ActiveState'):
+            raise RuntimeError('Cannot inspect running Slider Settings app: '
+                               + (result.stderr.strip() or result.stdout.strip() or 'user manager unavailable'))
+        return state['ActiveState']
+
+    if active_state() is None:
+        return
+    user_systemctl('stop', GUI_UNIT)
+    if active_state() not in (None, 'inactive', 'failed'):
+        raise RuntimeError('Slider Settings app is still running after its user service was stopped')
 
 
 def same_file():
@@ -264,12 +285,14 @@ def installed_gui():
 def install_gui(package):
     # Click unpacks as clickpkg and runs registration hooks for phablet. This is
     # the native path on 24.04, where the old PackageKit/pkcon is absent.
+    stop_gui()
     native_click('install', '--user=phablet', '--allow-unauthenticated', str(package), show_stdout=True)
     if installed_gui() != VERSION:
         raise RuntimeError('Slider Settings was not registered for phablet')
 
 
 def remove_gui():
+    stop_gui()
     if installed_gui() is not None:
         native_click('unregister', '--user=phablet', APP_ID, show_stdout=True)
         if installed_gui() is not None:
@@ -292,10 +315,12 @@ def seed_config():
                    str(BASE), account.pw_dir).stdout.strip()
 
 
-def ensure_state():
+def ensure_state(create=True):
     account = pwd.getpwnam('phablet')
     state = BASE / 'state'
     if not os.path.lexists(state):
+        if not create:
+            return
         state.mkdir(mode=0o700)
         os.chown(state, account.pw_uid, account.pw_gid)
     info = state.lstat()
@@ -399,6 +424,7 @@ def install(source):
               'backlight_present': backlight['present'],
               'backlight_enabled': backlight['enabled'],
               'backlight_active': backlight['active'], 'keypad_slide': native}
+    stop_gui()
     BASE.mkdir(mode=0o755)
     BASE.chmod(0o755)
     gui_attempted = False
@@ -429,6 +455,8 @@ def install(source):
 
 def uninstall():
     record = read_record()
+    ensure_state(create=False)
+    stop_gui()
     ensure_state()
     run('systemctl', 'disable', '--now', WATCHER)
     restore_previous(record)
@@ -447,7 +475,7 @@ def upgrade(source):
     newly_managed_native = 'keypad_slide' not in record
     if newly_managed_native:
         updated['keypad_slide'] = service_state(NATIVE, native_command)
-    ensure_state()
+    ensure_state(create=False)
     stock_path = BASE / 'OrientedShell.original.qml'
     safe_file(stock_path)
     stock = stock_path.read_bytes()
@@ -466,6 +494,8 @@ def upgrade(source):
     previous_services = {WATCHER: service_state(WATCHER)}
     if PLATFORM_UNIT.exists():
         previous_services[PLATFORM] = service_state(PLATFORM)
+    stop_gui()
+    ensure_state()
     names = tuple(dict.fromkeys((*FILES, CLICK_NAME, 'OrientedShell.original.qml',
                                 'OrientedShell.qml', 'installation.json', 'platform.json')))
     backup = Path(tempfile.mkdtemp(prefix='pro1x-slider-rollback-', dir=BASE.parent))

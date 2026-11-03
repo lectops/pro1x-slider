@@ -8,11 +8,13 @@ This workaround targets the **F(x)tec Pro1-X running Ubuntu Touch 24.04-2.2 stab
 
 | Setting | Default when open | When closed or paused |
 | --- | --- | --- |
-| Keyboard light | 100% brightness | Off |
+| Keyboard light | On | Off |
 | Display | Landscape with the keyboard below the screen | Previous exact-orientation preference restored |
 | On-screen keyboard | Hidden; hardware typing remains available | Previous visibility preference restored |
 
-In Slider Settings you can pause automation, toggle each feature, change brightness from 0–100%, reverse landscape direction, and restore package defaults. Changes apply while the slider is already open. The watcher keeps working when the app is closed or suspended.
+In Slider Settings you can pause automation, toggle each feature, reverse landscape direction, and restore package defaults. Changes apply while the slider is already open. The watcher keeps working when the app is closed or suspended.
+
+**The keyboard light on this port supports on/off only.** Its `leds-gpio` driver treats every nonzero value as on, even though the older sysfs interface reports `max_brightness=255`. Slider Settings does not offer a dimming control for this device.
 
 ## Install the whole package
 
@@ -26,6 +28,8 @@ In Slider Settings you can pause automation, toggle each feature, change brightn
 Enter the phone's sudo password when prompted. This single file includes the native app and complete source; installation needs no pip packages or additional downloads. Adjust the path if your browser saved it elsewhere.
 
 The installer enables the background integration, installs Slider Settings in the app drawer, and migrates an existing v0.1/v0.2 installation. It preserves the selected landscape direction, existing v0.3 preferences, and recovery state. Previous standalone backlight and native slider helpers are handled automatically if present.
+
+An upgrade closes any running Slider Settings window so its next launch loads the updated code. Open the app after the Terminal step finishes.
 
 At the end, it offers to reload Lomiri. **Save open apps first: reloading closes running apps.** Answer no to reboot later using the power menu. Then open **Slider Settings** from the app drawer. Routine preference changes need no password or restart.
 
@@ -44,10 +48,10 @@ This removes the app and background integration, restores owned OS preferences a
 ## Using Slider Settings
 
 - **Slider automation:** pause all features and restore preferences owned by the watcher. Individual feature choices are kept.
-- **Keyboard light:** enable the light and choose brightness. 0% keeps it off.
+- **Keyboard light:** turn on the light while open. Disable it to keep the light off.
 - **Landscape when open:** enable exact orientation. **Keyboard** is the confirmed Pro1-X direction; **Reversed** rotates it the other way.
 - **Hide on-screen keyboard:** suppress the system keyboard while open, including in the browser.
-- **Restore defaults:** enable all features, set 100% brightness, and select Keyboard direction. This does not reset normal Ubuntu Touch rotation or keyboard preferences.
+- **Restore defaults:** enable all features and select Keyboard direction. This does not reset normal Ubuntu Touch rotation or keyboard preferences.
 
 The status panel distinguishes saved preferences from settings the watcher has applied. A stopped watcher, stale report, unsupported feature, or pending interface reload is shown explicitly. It does not claim success from an old status file.
 

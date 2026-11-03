@@ -29,7 +29,7 @@ _config = {"schema_version": 1, "revision": "visual-qa", "enabled": True,
 
 def snapshot():
     config = copy.deepcopy(_config)
-    return {"config": config, "backend": "running", "error": None,
+    return {"config": config, "backend": "running", "error": None, "dimming_known": True,
             "status": {"schema_version": 1, "protocol_version": 1,
                 "backend_version": "0.3.0", "instance_id": "visual-fixture",
                 "heartbeat_monotonic": time.monotonic(),
@@ -37,7 +37,7 @@ def snapshot():
                 "applied_revision": config["revision"], "slider": "open",
                 "state": "active", "config": copy.deepcopy(config),
                 "config_error": None,
-                "capabilities": {name: True for name in ("backlight", "rotation", "keyboard")},
+                "capabilities": dict({name: True for name in ("backlight", "rotation", "keyboard")}, backlight_dimming=False),
                 "features": {name: {"state": "active", "message": ""}
                              for name in ("backlight", "rotation", "keyboard")},
                 "platform": {"overlay": "mounted", "reload_required": None}}}
@@ -90,7 +90,7 @@ Window {
         positionScroll(app, atBottom || false)
         viewport.grabToImage(function(result) {
             var ok = result.saveToFile(filename)
-            console.log("SLIDER_UI_QA " + JSON.stringify({file: filename, ok: ok, width: app.width, height: app.height}))
+            console.log("SLIDER_UI_QA " + JSON.stringify({file: filename, ok: ok, width: app.width, height: app.height, dimming_available: app.dimmingAvailable}))
             if (!ok) Qt.quit()
             else next()
         })
@@ -214,7 +214,7 @@ Window {
     Timer {
         interval: 1000; running: true; repeat: true
         onTriggered: {
-            if (!app.ready || !app.config || !window.testReady) return
+            if (!app.ready || !app.config || !window.testReady || !app.dimmingAvailable) return
             stop()
             py.call("transport_qa.inspect_value", [Math.round(37.7)], function(value) {
                 window.transported = value
@@ -260,9 +260,26 @@ def stage(destination, bridge_check=False):
     if bridge_check:
         (destination / "python/transport_qa.py").write_text('def inspect_value(value):\n    return {"type": type(value).__name__, "value": value}\n')
         seed = '''import sys
+import threading
+import time
 sys.path.insert(0, str(work / "python"))
-from slider_common import APP_ID, default_config, save_config
-save_config(Path(environment["XDG_CONFIG_HOME"]) / APP_ID / "config.json", default_config())
+from slider_common import APP_ID, default_config, save_config, load_config, atomic_json_write
+fixture_preferences = Path(environment["XDG_CONFIG_HOME"]) / APP_ID / "config.json"
+fixture_status = Path(environment["XDG_CACHE_HOME"]) / APP_ID / "status.json"
+save_config(fixture_preferences, default_config())
+def fixture_heartbeat():
+    while True:
+        config = load_config(fixture_preferences)
+        atomic_json_write(fixture_status, {"schema_version":1, "protocol_version":1,
+            "backend_version":"0.3.0", "instance_id":"isolated-dimming-qa",
+            "heartbeat_monotonic":time.monotonic(), "observed_revision":config["revision"],
+            "applied_revision":config["revision"], "slider":"open", "state":"active",
+            "config":config, "config_error":None,
+            "capabilities":{"backlight":True, "rotation":True, "keyboard":True, "backlight_dimming":True},
+            "features":{name:{"state":"active", "message":""} for name in ("backlight", "rotation", "keyboard")},
+            "platform":{"overlay":"mounted", "reload_required":None}})
+        time.sleep(0.25)
+threading.Thread(target=fixture_heartbeat, daemon=True).start()
 '''
         runner = runner.replace('binary = shutil.which("qmlscene")', seed + 'binary = shutil.which("qmlscene")')
         runner = runner.replace('"fixture_bridge": True', '"fixture_bridge": False')

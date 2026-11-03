@@ -239,6 +239,26 @@ class GuiBridgeTests(unittest.TestCase):
                 self.bridge.status_file.write_text(content)
                 self.assertEqual(self.bridge.snapshot()["backend"], "incompatible")
 
+    def test_optional_dimming_capability_is_strict_and_missing_defaults_to_false(self):
+        self.report()
+        result = self.bridge.snapshot()
+        self.assertFalse(result["status"]["capabilities"]["backlight_dimming"])
+        self.assertFalse(result["dimming_known"])
+        for supported in (False, True):
+            capabilities = {name: True for name in gui_bridge.FEATURES}
+            capabilities["backlight_dimming"] = supported
+            self.report(capabilities=capabilities)
+            result = self.bridge.snapshot()
+            self.assertIs(result["status"]["capabilities"]["backlight_dimming"], supported)
+            self.assertTrue(result["dimming_known"])
+        for malformed in (1, 0, None, "true", []):
+            capabilities = {name: True for name in gui_bridge.FEATURES}
+            capabilities["backlight_dimming"] = malformed
+            self.report(capabilities=capabilities)
+            result = self.bridge.snapshot()
+            self.assertEqual(result["backend"], "incompatible")
+            self.assertIsNone(result["status"])
+
     def test_probe_uses_both_app_scoped_directories_without_touching_settings(self):
         config_base, cache_base = self.home / ".config", self.home / ".cache"
         original_open, original_read = Path.open, Path.read_text
@@ -329,6 +349,18 @@ s.backend = 'stale'; assert.doesNotMatch(context.heading(s, false, false), /appl
 s.backend = 'checking'; assert.doesNotMatch(context.heading(s, false, false), /applied/);
 s.backend = 'running'; s.config.enabled = false;
 assert.match(context.heading(s, false, false), /overrides restored/);
+assert.strictEqual(context.canDim(s), false);
+assert.match(context.dimmingDetail(s), /not reported/);
+s.dimming_known = true; s.status.capabilities.backlight_dimming = false;
+assert.strictEqual(context.canDim(s), false);
+assert.match(context.dimmingDetail(s), /on\/off only/);
+s.status.capabilities.backlight_dimming = true;
+assert.strictEqual(context.canDim(s), true);
+for (const backend of ['checking', 'stale', 'missing', 'incompatible']) {
+  s.backend = backend;
+  assert.strictEqual(context.canDim(s), false);
+  assert.match(context.dimmingDetail(s), /not confirmed/);
+}
 """
         result = subprocess.run(["node", "-e", script, str(SOURCE / "app/qml/Status.js")],
                                 capture_output=True, text=True, timeout=10)
