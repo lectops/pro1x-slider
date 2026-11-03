@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+.DS_Store
+*.deb
+*.tar.gz
+*.tar.xz
+/dist/
+installation.json
+saved-orientation.json
+watcher.lock

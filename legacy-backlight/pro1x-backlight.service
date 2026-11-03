@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-3.0-only
+[Unit]
+Description=Pro1 X keyboard slide backlight
+After=systemd-udev-trigger.service
+StartLimitIntervalSec=0
+
+[Service]
+ExecStart=/usr/bin/python3 /home/phablet/.local/lib/pro1x-backlight/slide-backlight.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

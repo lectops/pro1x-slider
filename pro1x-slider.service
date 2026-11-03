@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: GPL-3.0-only
+[Unit]
+Description=Pro1 X slider backlight and orientation
+RequiresMountsFor=/userdata/system-data/pro1x-slider
+After=systemd-udev-trigger.service
+Before=display-manager.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=phablet
+Group=phablet
+SupplementaryGroups=android_input plugdev
+Environment=PYTHONUNBUFFERED=1
+Environment=SLIDER_STATE_DIR=/userdata/system-data/pro1x-slider/state
+ExecStartPre=-+/usr/bin/python3 /userdata/system-data/pro1x-slider/install.py mount
+ExecStart=/usr/bin/python3 /userdata/system-data/pro1x-slider/slider.py
+ExecStopPost=-+/usr/bin/python3 /userdata/system-data/pro1x-slider/install.py unmount
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=35
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

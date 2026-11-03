@@ -1,0 +1,22 @@
+Pro1-X slider backlight and orientation workaround
+Copyright (C) 2026 lectops
+License: GNU General Public License, version 3 only (GPL-3.0-only).
+
+Lomiri / Unity 8 attribution
+----------------------------
+
+The QML transform in qml_patch.py modifies the installed
+/usr/share/lomiri/OrientedShell.qml. That upstream file carries:
+
+    Copyright (C) 2015 Canonical, Ltd.
+
+It is licensed under version 3 of the GNU General Public License. The
+transform preserves the original file's copyright and license notice in
+the generated QML. The complete generated file is produced locally from
+the matching installed source and is not included in this repository.
+
+Current upstream project:
+https://gitlab.com/ubports/development/core/lomiri
+
+Historical source and notice for qml/OrientedShell.qml:
+https://github.com/ubports/unity8/blob/xenial/qml/OrientedShell.qml
