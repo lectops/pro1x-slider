@@ -86,9 +86,10 @@ def main():
         (work / 'OrientedShell.qml').write_bytes(result)
         (work / 'tst_rotation.qml').write_text(harness(result.decode()))
         commands = [
-            ['python3', '-m', 'unittest', '-v', 'test_slider.py', 'test_package.py'],
+            ['python3', '-m', 'unittest', 'discover', '-v'],
             [str(prefix / 'usr/lib/qt5/bin/qmllint'), str(work / 'OrientedShell.qml')],
-            ['systemd-analyze', 'verify', '--man=no', str(source / 'pro1x-slider.service')],
+            ['systemd-analyze', 'verify', '--man=no', str(source / 'pro1x-slider.service'),
+             str(source / 'pro1x-slider-platform.service')],
             [str(prefix / 'usr/lib/qt5/bin/qmltestrunner'), '-input', str(work / 'tst_rotation.qml'),
              '-import', '/usr/lib/aarch64-linux-gnu/lomiri/qml',
              '-import', str(prefix / 'usr/lib/aarch64-linux-gnu/qt5/qml')],

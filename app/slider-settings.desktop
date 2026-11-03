@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=Slider Settings
+Comment=Configure the Pro1-X keyboard slider
+Exec=qmlscene qml/Main.qml
+Icon=assets/slider.svg
+Terminal=false
+Type=Application
+X-Lomiri-Touch=true
+X-Ubuntu-Touch=true

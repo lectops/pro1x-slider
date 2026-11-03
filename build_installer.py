@@ -9,12 +9,17 @@ from pathlib import Path
 import textwrap
 import zipfile
 
-VERSION = '0.2.0'
+from slider_common import APP_ID, VERSION
+
+CLICK_NAME = APP_ID + '_' + VERSION + '_all.click'
 FILES = (
     '.gitignore', 'README.md', 'CHANGELOG.md', 'LICENSE', 'NOTICE',
-    'slider.py', 'qml_patch.py', 'install.py', 'pro1x-slider.service',
+    'slider.py', 'slider_common.py', 'qml_patch.py', 'install.py',
+    'pro1x-slider.service', 'pro1x-slider-platform.service',
     'install-phone.sh', 'phone_checks.py', 'test_slider.py',
-    'test_package.py', 'build_installer.py', 'docs/VALIDATION.md',
+    'test_install.py', 'test_package.py', 'test_backend.py', 'test_gui_bridge.py',
+    'build_installer.py', 'build_click.py', 'tools/stage_ui_qa.py',
+    'docs/VALIDATION.md', 'docs/CONTRACT.md',
 )
 
 LOADER = '''#!/usr/bin/python3
@@ -84,17 +89,28 @@ if __name__ == '__main__':
 '''
 
 
-def build(source, output):
+def build(source, output, click_package=None):
     source, output = Path(source), Path(output)
+    if click_package is None:
+        raise ValueError('Supply the built Click package with --click-package')
+    click_package = Path(click_package)
+    if click_package.name != CLICK_NAME:
+        raise ValueError('Expected Click package named ' + CLICK_NAME)
+    app_files = tuple(sorted(str(path.relative_to(source)) for path in (source / 'app').rglob('*')
+                             if path.is_file() and '__pycache__' not in path.parts
+                             and path.suffix not in ('.pyc', '.pyo')))
+    if not app_files:
+        raise ValueError('App source is missing')
+    files = (*FILES, *app_files, CLICK_NAME)
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
-        for name in FILES:
+        for name in files:
             info = zipfile.ZipInfo(name, date_time=(2026, 11, 3, 0, 0, 0))
             info.compress_type = zipfile.ZIP_DEFLATED
             info.external_attr = 0o100644 << 16
-            archive.writestr(info, (source / name).read_bytes())
+            archive.writestr(info, (click_package if name == CLICK_NAME else source / name).read_bytes())
     payload = buffer.getvalue()
-    text = LOADER.replace('@VERSION@', VERSION).replace('@FILES@', repr(FILES))
+    text = LOADER.replace('@VERSION@', VERSION).replace('@FILES@', repr(files))
     text = text.replace('@SHA256@', hashlib.sha256(payload).hexdigest())
     text = text.replace('@PAYLOAD@', '\n'.join(textwrap.wrap(base64.b64encode(payload).decode(), 76)))
     output.mkdir(parents=True, exist_ok=True)
@@ -108,5 +124,7 @@ def build(source, output):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output-dir', type=Path, default=Path(__file__).resolve().parent / 'dist')
+    parser.add_argument('--click-package', type=Path, required=True,
+                        help='Built ' + CLICK_NAME + ' to include alongside its source')
     options = parser.parse_args()
-    print(build(Path(__file__).resolve().parent, options.output_dir))
+    print(build(Path(__file__).resolve().parent, options.output_dir, options.click_package))

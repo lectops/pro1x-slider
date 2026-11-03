@@ -14,7 +14,11 @@ for argument in "$@"; do
         *) echo "Unknown argument: $argument" >&2; exit 2 ;;
     esac
 done
-sudo /usr/bin/python3 "$slider_dir/install.py" "$action"
+if [ "$(id -u)" -eq 0 ]; then
+    /usr/bin/python3 "$slider_dir/install.py" "$action"
+else
+    sudo /usr/bin/python3 "$slider_dir/install.py" "$action"
+fi
 if [ "$reload" = no ]; then
     exit 0
 fi

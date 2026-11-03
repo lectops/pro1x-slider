@@ -1,48 +1,75 @@
 # Pro1-X slider package
 
-One install and one systemd service for the F(x)tec Pro1-X running Ubuntu Touch: slide the keyboard open to turn on its backlight, lock the screen to the useful landscape orientation, and hide the system on-screen keyboard while typing on hardware. Close it to turn the light off and restore the previous rotation and on-screen keyboard settings.
+Slide the keyboard open to light it, turn the display the right way up over the keyboard, and hide Ubuntu Touch's on-screen keyboard. Close it to turn the light off and restore the previous rotation and keyboard preferences.
 
-This bind-mount workaround is confirmed on **one Pro1-X running Ubuntu Touch 24.04-2.2 stable**. The installer checks the exact Lomiri QML file before applying the override. See [validation and compatibility](docs/VALIDATION.md) for the tested build and the limits of the checks.
+**Slider Settings** is the native Ubuntu Touch app for configuring this behavior. The complete package includes the app, background watcher, and guarded Lomiri bind-mount workaround. No previous backlight service or slider setup is required.
 
-| Slider | Backlight | Screen | On-screen keyboard |
-| --- | --- | --- | --- |
-| Open | On, brightness 255 | Landscape, keyboard below the display | Hidden; hardware typing stays available |
-| Closed | Off | Previous rotation behavior | Previous keyboard preference restored |
+This workaround targets the **F(x)tec Pro1-X running Ubuntu Touch 24.04-2.2 stable**. Compatibility is limited to the exact Lomiri build below. See [validation](docs/VALIDATION.md) for recorded checks and remaining hardware tests.
 
-No previous backlight setup is required. The service starts at boot, reads the initial slider state, and handles later slide events without grabbing keyboard input. It leaves the normal `rotation-lock` preference unchanged. The three handlers fail independently, and saved-state journals support recovery after a watcher crash.
+| Setting | Default when open | When closed or paused |
+| --- | --- | --- |
+| Keyboard light | On | Off |
+| Display | Landscape with the keyboard below the screen | Previous exact-orientation preference restored |
+| On-screen keyboard | Hidden; hardware typing remains available | Previous visibility preference restored |
 
-## Install with one command
+In Slider Settings you can pause automation, toggle each feature, reverse landscape direction, and restore package defaults. Changes apply while the slider is already open. The watcher keeps working when the app is closed or suspended.
 
-1. On the phone, download **[pro1x-slider-0.2.0.py](https://github.com/lectops/pro1x-slider/releases/download/v0.2.0/pro1x-slider-0.2.0.py)** from the [release page](https://github.com/lectops/pro1x-slider/releases/tag/v0.2.0).
-2. Open the phone's Terminal and run:
+**The keyboard light on this port supports on/off only.** Its `leds-gpio` driver treats every nonzero value as on, even though the older sysfs interface reports `max_brightness=255`. Slider Settings does not offer a dimming control for this device.
+
+## Install the whole package
+
+1. Download **[pro1x-slider-0.3.0.py](https://github.com/lectops/pro1x-slider/releases/download/v0.3.0/pro1x-slider-0.3.0.py)** from the [release page](https://github.com/lectops/pro1x-slider/releases/tag/v0.3.0) on the phone.
+2. In the phone's Terminal, run:
 
    ```sh
-   python3 ~/Downloads/pro1x-slider-0.2.0.py
+   python3 ~/Downloads/pro1x-slider-0.3.0.py
    ```
 
-Enter the phone's sudo password when prompted. The file includes all source and extracts it automatically; it does not download or install dependencies. It installs all three features together and enables them at boot. If an older version is installed, it upgrades it while keeping the selected landscape direction.
+Enter the phone's sudo password when prompted. This single file includes the native app and complete source; installation needs no pip packages or additional downloads. Adjust the path if your browser saved it elsewhere.
 
-At the end, it asks whether to reload Lomiri. Save open apps before answering yes: reloading closes running apps. Answer no to reboot later using the phone's power menu. No separate setup or restart command is needed.
+The installer enables the background integration, installs Slider Settings in the app drawer, and migrates an existing v0.1/v0.2 installation. It preserves the selected landscape direction, existing v0.3 preferences, and recovery state. Previous standalone backlight and native slider helpers are handled automatically if present.
 
-The download location may differ if the browser saved the file somewhere other than `~/Downloads`. A [SHA256SUMS](https://github.com/lectops/pro1x-slider/releases/download/v0.2.0/SHA256SUMS) file is also available with the release.
+An upgrade closes any running Slider Settings window so its next launch loads the updated code. Open the app after the Terminal step finishes.
 
-### Remove with one command
+At the end, it offers to reload Lomiri. **Save open apps first: reloading closes running apps.** Answer no to reboot later using the power menu. Then open **Slider Settings** from the app drawer. Routine preference changes need no password or restart.
 
-Keep the installer file, then run:
+The release includes [SHA256SUMS](https://github.com/lectops/pro1x-slider/releases/download/v0.3.0/SHA256SUMS). To inspect everything without installing, run the file with `--extract DIRECTORY`, choosing an empty directory.
+
+### Remove the whole package
+
+Keep the downloaded installer, then run:
 
 ```sh
-python3 ~/Downloads/pro1x-slider-0.2.0.py uninstall
+python3 ~/Downloads/pro1x-slider-0.3.0.py uninstall
 ```
 
-It removes the package, restores the saved settings and any previously installed slider helpers, and offers to reload Lomiri.
+This removes the app and background integration, restores owned OS preferences and previous slider helpers, and offers to reload Lomiri. Your Slider Settings preferences remain in your home directory for a later reinstall. Removing only the app through Ubuntu Touch leaves the watcher using its saved preferences; rerunning the complete installer restores the app.
+
+## Using Slider Settings
+
+- **Slider automation:** pause all features and restore preferences owned by the watcher. Individual feature choices are kept.
+- **Keyboard light:** turn on the light while open. Disable it to keep the light off.
+- **Landscape when open:** enable exact orientation. **Keyboard** is the confirmed Pro1-X direction; **Reversed** rotates it the other way.
+- **Hide on-screen keyboard:** suppress the system keyboard while open, including in the browser.
+- **Restore defaults:** enable all features and select Keyboard direction. This does not reset normal Ubuntu Touch rotation or keyboard preferences.
+
+The status panel distinguishes saved preferences from settings the watcher has applied. A stopped watcher, stale report, unsupported feature, or pending interface reload is shown explicitly. It does not claim success from an old status file.
+
+If another program changes a preference while the slider is open, the watcher preserves that change and relinquishes that feature until a real close/open cycle. Same-value writes by another program cannot be distinguished. The normal `rotation-lock` preference is left unchanged.
 
 ## Compatibility
 
-- F(x)tec Pro1-X / QX1050, ARM64.
-- Ubuntu Touch 24.04-2.2 stable, Ubuntu 24.04.5 base.
-- Tested Lomiri package: `0.5.0+0~20260910085057.5+ubports24.04.2~1.gbp0bd07c`.
-- User account `phablet`, with its normal `android_input` and `plugdev` groups.
-- Python 3 and standard Ubuntu Touch utilities: `systemctl`, `systemd-analyze`, `mount`, `umount`, `mountpoint`, `runuser`, and `gsettings`.
+| Component | Target |
+| --- | --- |
+| Device | F(x)tec Pro1-X / QX1050, ARM64 |
+| OS | Ubuntu Touch 24.04-2.2 stable; Ubuntu 24.04.5 base |
+| Lomiri | `0.5.0+0~20260910085057.5+ubports24.04.2~1.gbp0bd07c` |
+| Click framework | `ubuntu-touch-24.04-2.x` |
+| AppArmor policy | `2404.2`, no optional policy groups |
+| GUI | Lomiri Components 1.3 and PyOtherSide 1.5 API |
+| Account | `phablet`, with normal `android_input` and `plugdev` groups |
+
+The phone supplies Python 3, Click, Qt/QML, PyOtherSide, GSettings, systemd, and mount utilities. The installer validates package identity, the QML build, and systemd units before replacing an installation.
 
 The required SHA-256 of `/usr/share/lomiri/OrientedShell.qml` is:
 
@@ -50,95 +77,68 @@ The required SHA-256 of `/usr/share/lomiri/OrientedShell.qml` is:
 633578d225f0dd41a656b27c08e0d5cc0901e6b6267c74c26edab8823524dec8
 ```
 
-Keep the checksum guard when adapting this to another build. A different QML file needs review and testing before the pinned hash changes. The installer does not install packages or require pip dependencies.
+Keep this guard when adapting the package. A different QML file needs review and testing before its hash is accepted. After an OS update, an unfamiliar build prevents the overlay from mounting; the backlight and keyboard handlers can continue, and the app reports unavailable rotation support. Do not bypass the guard to clear that message.
 
-## Install from source
+Other devices require a port: their slide switch, backlight interface, orientation, shell build, and confinement framework must be checked. This is a device package, not a change to every Ubuntu Touch port.
 
-For development, download the [v0.2.0 source archive](https://github.com/lectops/pro1x-slider/archive/refs/tags/v0.2.0.tar.gz), or clone this repo. Copy/extract the whole directory onto the phone, then run from that directory:
+## How it works
 
-   ```sh
-   sh install-phone.sh
-   ```
+One long-running Python watcher runs as `phablet`. It reads `SW_KEYPAD_SLIDE` on `gpio-keys` without grabbing keyboard input. On this phone 0 means open and 1 means closed. Independent handlers reconcile light, rotation, and keyboard settings, journaling ownership before writing.
 
-The script handles sudo, installation or upgrade, and the optional interface reload. Pass `--no-reload` to skip the reload prompt. To inspect the result:
+A separate root oneshot prepares the guarded QML bind mount before the display manager starts at boot. A generated file under `/userdata/system-data/pro1x-slider/` overlays the matching system QML; the system image stays read-only. Restarting the watcher cannot trigger a mount or interface reload.
 
-   ```sh
-   systemctl status pro1x-slider.service
-   journalctl -u pro1x-slider.service -n 30 --no-pager
-   ```
+The confined app writes validated preferences to `~/.config/pro1x-slider.lectops/config.json` and reads the watcher's heartbeat at `~/.cache/pro1x-slider.lectops/status.json`. It has no privileged service controls. Atomic files and opaque revision tokens distinguish saved, pending, and applied changes. The watcher retains its last accepted configuration if the preferences file is missing or invalid.
 
-The installer enables `pro1x-slider.service` on a fresh phone. If the old `pro1x-backlight.service` or built-in user `keypad-slide.service` exists, it records their enabled/running state and disables competing helpers automatically. Uninstall restores only what was there before. A failed upgrade attempts to reinstall the previous package.
+The keyboard handler uses `com.lomiri.keyboard.maliit stay-hidden`, restoring the prior value on close. It does not change `always-show-osk` or disable hardware input. Recovery journals remain outside the app sandbox in the backend's phablet-owned `state/` directory.
 
-### Landscape direction
+See the [configuration and status contract](docs/CONTRACT.md) for schema and recovery details. There is no screen-off light timeout yet. App-specific layouts and external displays have not been tested.
 
-The default is the confirmed Pro1-X direction, `InvertedLandscapeOrientation`. It can also be set explicitly as phablet:
+## Development and diagnostics
+
+Portable checks need no root or hardware:
 
 ```sh
-echo InvertedLandscapeOrientation > /userdata/system-data/pro1x-slider/state/landscape-orientation
-```
-
-Close and reopen the keyboard to pick up the change. The other supported value is `LandscapeOrientation`.
-
-### Uninstall
-
-In the phone's Terminal:
-
-```sh
-sudo python3 /userdata/system-data/pro1x-slider/install.py uninstall
-systemctl --user restart lomiri-full-greeter.service
-```
-
-The uninstaller restores pending orientation and on-screen keyboard settings, removes the QML bind mount and slider unit, and restores any previous helpers' recorded enabled/running state. It then removes its installation directory. If settings restoration fails because the desktop session bus is unavailable, it retains the recovery files so uninstall can be retried after logging in.
-
-## How the bind mount works
-
-This Lomiri build responds to the older `rotation-lock` boolean but does not use the exact `orientation-lock` setting in the way the slider needs. The patch makes the QML shell honor that existing exact-orientation setting while retaining its ordinary rotation tracking.
-
-`install.py` verifies the original QML checksum and generates a patched copy under root-owned `/userdata/system-data/pro1x-slider/`. A bind mount places that copy over `/usr/share/lomiri/OrientedShell.qml`. The system image stays read-only, and the original file is retained under the mount.
-
-The same service prepares that mount before the display manager starts at boot, then runs the watcher as phablet. Runtime state lives in its phablet-owned `state/` subdirectory. The watcher saves the previous settings before applying overrides and removes saved state only after restoration succeeds. It queries `SW_KEYPAD_SLIDE` on `gpio-keys`: on the tested phone, 0 is open and 1 is closed.
-
-While open, `com.lomiri.keyboard.maliit stay-hidden` is set to true. Closing restores its previous value, including a pre-existing preference to keep the keyboard hidden. This suppresses the system keyboard without disabling hardware key input or changing `always-show-osk`. It was confirmed in a live browser trial.
-
-After an OS update, an unfamiliar QML checksum prevents the override from being mounted. The watcher keeps handling the backlight and keyboard and logs the unavailable orientation override. Supporting the new build requires reviewing the patch against its QML, rather than bypassing the guard.
-
-There is no screen-off backlight timeout. App-specific layout behavior and external displays have not been tested.
-
-## Tests
-
-The portable tests do not need root or access to phone hardware:
-
-```sh
-python3 -m unittest -v test_slider.py test_package.py
+python3 -m unittest discover -v
 sh -n install-phone.sh
 ```
 
-The 32 tests cover restoration, crash/restart recovery, independent handlers, fresh installs, optional migration, upgrades and rollback, and single-file extraction. Phone-side QML and systemd checks are described in [docs/VALIDATION.md](docs/VALIDATION.md).
+The suite covers validation, live reconciliation, crash recovery, ownership, GUI status, migration, rollback, uninstall, and complete installer extraction. Native Qt, systemd, and confinement checks are described in [docs/VALIDATION.md](docs/VALIDATION.md).
 
-Build the downloadable installer from this source tree with:
+To build from source on a matching Ubuntu Touch phone, start with an empty staging directory:
 
 ```sh
-python3 build_installer.py
+python3 build_click.py /tmp/pro1x-slider-click
+click build /tmp/pro1x-slider-click
+python3 build_installer.py --click-package pro1x-slider.lectops_0.3.0_all.click
 ```
 
-The installer and `SHA256SUMS` are written under `dist/`. To inspect a downloaded installer's complete source without installing anything, run it with `--extract DIRECTORY`, choosing an empty directory.
+The combined installer and checksum are written under `dist/`. Build Click on a system with the matching framework; portable test payloads do not substitute for a native build. For a source install, place the built `.click` next to `install.py`, then run `sh install-phone.sh`. `--no-reload` skips the interface reload prompt.
 
-For a compatibility report, include the device model, Ubuntu Touch version/channel, Lomiri package version, QML checksum, and which keyboard transition fails. The known result is one tested device/build; reports from matching builds are welcome.
+Useful phone-side diagnostics:
+
+```sh
+systemctl status pro1x-slider.service pro1x-slider-platform.service
+journalctl -u pro1x-slider.service -n 40 --no-pager
+cat ~/.cache/pro1x-slider.lectops/status.json
+```
+
+If uninstall cannot restore a setting because the desktop session is unavailable, it retains the backend and journals. Unlock/log in, then retry. If an upgrade reports a retained rollback directory, keep it and its `transaction.json`; the message names the matching recovery reader. Do not delete journals to silence an error or start a legacy watcher before recovery finishes.
+
+For a compatibility report include device model, OS version/channel, Lomiri version, QML checksum, relevant status/log output, and the transition that fails. One matching phone and automated fixtures do not establish compatibility with other builds.
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
-| `slider.py` | Slider reader and independent backlight, rotation, and keyboard handlers |
+| `slider.py`, `slider_common.py` | Watcher, handlers, validated file protocol |
+| `app/`, `build_click.py` | Native app, asynchronous Python bridge, Click staging |
 | `qml_patch.py` | Exact-build QML transform and checksum guard |
-| `pro1x-slider.service` | Boot startup, mount preparation, and watcher |
-| `install.py` | Install, uninstall, mount, and unmount actions |
-| `install-phone.sh` | Short install entry point |
-| `test_slider.py` | Portable recovery and installer tests |
-| `phone_checks.py` | QML syntax, systemd, and offscreen Qt checks |
-| `build_installer.py` | Builds the self-contained installer and checksum file |
-| `test_package.py` | Complete-source extraction and installer packaging checks |
+| `pro1x-slider.service` | Unprivileged watcher |
+| `pro1x-slider-platform.service` | Root boot-time overlay oneshot |
+| `install.py`, `install-phone.sh` | Install, upgrade, rollback, uninstall |
+| `build_installer.py` | Single-file installer with app and complete source |
+| `test_*.py`, `phone_checks.py` | Portable tests and native checks |
 
 ## License
 
-GPL-3.0-only. See [LICENSE](LICENSE) and [NOTICE](NOTICE) for the license and upstream QML attribution. This repository contains the workaround and its source; the patched full Lomiri QML file is generated from the matching file already installed on the phone.
+GPL-3.0-only. See [LICENSE](LICENSE) and [NOTICE](NOTICE). The full patched Lomiri QML file is generated from the matching file already installed on the phone; this repository contains the transform and its source.
