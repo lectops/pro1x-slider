@@ -1,0 +1,15 @@
+[Unit]
+Description=Suppress Pro1 X fingerprint reader wake-button events
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 %h/.local/lib/pro1x-fingerprint-no-wake/no-wake.py
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=yes
+UMask=0077
+
+[Install]
+WantedBy=default.target

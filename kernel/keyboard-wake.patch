@@ -1,0 +1,113 @@
+--- a/drivers/input/keyboard/aw9523/aw9523b.c
++++ b/drivers/input/keyboard/aw9523/aw9523b.c
+@@ -53,6 +53,7 @@
+ #include <linux/irq.h>
+ #include <linux/sched.h>
+ #include <linux/pm.h>
++#include <linux/pm_wakeirq.h>
+ #include <linux/slab.h>
+ #include <linux/sysctl.h>
+ #include <linux/proc_fs.h>
+@@ -476,7 +477,7 @@
+ 		aw9523b_write_reg(CONFIG_PORT1, ~(1 << i));
+ 		if (state[i] != (u8) ~aw9523b_get_P0_value()) {
+ 			//AW9523_LOG("mid-scan key state change");
+-			schedule_delayed_work(&pdata->work, 0);
++			queue_delayed_work(system_freezable_wq, &pdata->work, 0);
+ 			return;
+ 		}
+ 	}
+@@ -566,7 +567,7 @@
+ 	// We re-schedule ourselves to poll for changes if a key is pressed
+ 	//   because the pressed key could obscure others when not scanning.
+ 	if (keymask)
+-		schedule_delayed_work(&pdata->work, msecs_to_jiffies(POLL_INTERVAL));
++		queue_delayed_work(system_freezable_wq, &pdata->work, msecs_to_jiffies(POLL_INTERVAL));
+ 
+ 	// Re-enabled the interrupt and make sure all is right.
+ 	aw9523b_disable_P1_interupt();
+@@ -579,7 +580,7 @@
+ 	// Check if there wasn't a key pressed while we had interrupts disabled.
+ 	if (aw9523b_get_P0_value() != (u8) ~keymask) {
+ 		AW9523_LOG("missed state change");
+-		schedule_delayed_work(&pdata->work, 0);
++		queue_delayed_work(system_freezable_wq, &pdata->work, 0);
+ 	}
+ }
+ 
+@@ -587,11 +588,14 @@
+ {
+     struct aw9523b_data *pdata = dev_id;
+ 
++    if (device_may_wakeup(&pdata->client->dev))
++        pm_wakeup_event(&pdata->client->dev, 1000);
++
+     //AW9523_LOG("%s enter\n",__func__);
+ 
+     aw9523b_irq_disable(pdata);
+ 
+-    schedule_delayed_work(&pdata->work, 0);
++    queue_delayed_work(system_freezable_wq, &pdata->work, 0);
+ 
+     return IRQ_HANDLED;
+ }
+@@ -915,6 +919,13 @@
+     struct aw9523b_data *data = dev_get_drvdata(dev);
+     //int err;
+ 
++    /* Panel blanking must not reset a keyboard that is a wake source. */
++    if (device_may_wakeup(dev)) {
++        if (capslock_led_enable == 1)
++            gpio_direction_output(data->gpio_caps_led, 0);
++        return 0;
++    }
++
+     dev_err(&data->client->dev, "%s start have_suspend = %d \n", __func__,data->have_suspend);
+ 
+     if(data->have_suspend == 0)
+@@ -946,6 +957,9 @@
+ {
+ 	struct aw9523b_data *data = dev_get_drvdata(dev);
+ 	int err,devic_id;
++
++    if (!data->have_suspend && capslock_led_enable == 1)
++        gpio_direction_output(data->gpio_caps_led, 1);
+ 	dev_err(&data->client->dev, "%s start have_suspend = %d \n", __func__,data->have_suspend);
+ 
+     if(data->have_suspend)
+@@ -1274,11 +1288,24 @@
+ 
+    // debug_printk("%s device_id = %d\n",__func__,devic_id);
+     INIT_DELAYED_WORK(&pdata->work, aw9523b_work_func);
+-    pdata->irq_is_disabled = true;
++    pdata->irq_is_disabled = false;
+     err = request_irq(client->irq,
+             aw9523b_irq_handler,
+             IRQ_TYPE_EDGE_FALLING,
+             client->name, pdata);
++
++    if (err)
++        goto deinit_power_exit;
++
++    /* The PM core arms this IRQ only for system sleep, not panel blanking. */
++    err = device_init_wakeup(&client->dev, true);
++    if (!err) {
++        err = dev_pm_set_wake_irq(&client->dev, client->irq);
++        if (err)
++            device_init_wakeup(&client->dev, false);
++    }
++    if (err)
++        dev_warn(&client->dev, "Keyboard wake unavailable: %d\n", err);
+ 
+     //schedule_delayed_work(&pdata->keypad_work, 0);
+  	//aw9523b_irq_enable(pdata);
+@@ -1312,6 +1339,9 @@
+ static int aw9523b_remove(struct i2c_client *client)
+ {
+     struct aw9523b_data *data = i2c_get_clientdata(client);
++
++    dev_pm_clear_wake_irq(&client->dev);
++    device_init_wakeup(&client->dev, false);
+ 
+     //cancel_delayed_work_sync(&data->p1_012_work);
+     aw9523b_power_deinit(data);

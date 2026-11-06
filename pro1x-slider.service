@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-only
 [Unit]
-Description=Pro1 X slider settings watcher
+Description=Pro1 X Tweaks hardware watcher
 RequiresMountsFor=/userdata/system-data/pro1x-slider
 # Both units are enabled independently. Ordering waits at boot without starting
 # or retrying the privileged overlay when only this watcher is restarted.

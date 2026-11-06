@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""One slider reader for independent backlight, rotation, and OSK handlers."""
+"""One watcher for slider preferences, screen wake, and fingerprint wake control."""
 import argparse
 import fcntl
 import glob
@@ -15,7 +15,7 @@ import subprocess
 import time
 import uuid
 
-from slider_common import (VERSION, PROTOCOL_VERSION, default_config, validate_config,
+from slider_common import (VERSION, PROTOCOL_VERSION, SCHEMA_VERSION, default_config, validate_config,
                            config_path, status_path, load_config, save_config,
                            read_json, atomic_json_write)
 
@@ -180,9 +180,10 @@ def restore_settings(rotation, keyboard):
 
 
 class Controller:
-    def __init__(self, rotation, brightness=LIGHT, keyboard=None):
+    def __init__(self, rotation, brightness=LIGHT, keyboard=None, hardware=None):
         self.rotation, self.brightness = rotation, Path(brightness)
         self.keyboard = keyboard
+        self.hardware = hardware
         self.done, self.errors, self.features = {}, {}, {}
         self.opened = None
         self.last_brightness = None
@@ -247,6 +248,14 @@ class Controller:
                 self.errors[name] = message
                 state = 'waiting' if 'session' in message.lower() else 'unsupported' if 'override' in message.lower() or 'overlay' in message.lower() else 'error'
                 self.features[name] = {'state': state, 'message': message}
+        if self.hardware is not None:
+            self.hardware.reconcile(config, opened)
+            self.features.update(self.hardware.features)
+            for name, feature in self.hardware.features.items():
+                if feature['state'] in ('error', 'unsupported'):
+                    self.errors[name] = feature['message']
+                else:
+                    self.errors.pop(name, None)
         self.opened = opened
         return not self.errors
 
@@ -301,13 +310,16 @@ def make_status(store, controller, instance, opened, device_error=None):
     features = dict(controller.features)
     for name in ('backlight', 'rotation', 'keyboard'):
         features.setdefault(name, {'state': 'waiting', 'message': 'Waiting for slider input'})
+    for name in ('slider_wake', 'keyboard_wake', 'fingerprint'):
+        features.setdefault(name, {'state': 'disabled', 'message': ''})
     platform = overlay_status()
     errors = bool(controller.errors or store.error or device_error)
     recovery = any('journal' in item['message'].lower() or 'saved' in item['message'].lower() for item in features.values() if item['state'] == 'error')
     state = 'recovery_needed' if recovery else 'degraded' if errors else 'starting' if opened is None else 'paused' if not store.config['enabled'] else 'active'
     if device_error:
         features['backlight'] = {'state': 'waiting', 'message': device_error}
-    return {'schema_version': 1, 'protocol_version': PROTOCOL_VERSION, 'backend_version': VERSION,
+    hardware_capabilities = controller.hardware.capabilities if controller.hardware else {}
+    return {'schema_version': SCHEMA_VERSION, 'protocol_version': PROTOCOL_VERSION, 'backend_version': VERSION,
             'instance_id': instance, 'heartbeat_monotonic': time.monotonic(),
             'observed_revision': store.config['revision'],
             'applied_revision': store.config['revision'] if not errors and opened is not None else None,
@@ -316,7 +328,8 @@ def make_status(store, controller, instance, opened, device_error=None):
             'capabilities': {'backlight': controller.brightness.exists(),
                              'backlight_dimming': False,
                              'rotation': platform['overlay'] == 'mounted',
-                             'keyboard': features['keyboard']['state'] not in ('error', 'unsupported')},
+                             'keyboard': features['keyboard']['state'] not in ('error', 'unsupported'),
+                             **{name: hardware_capabilities.get(name, False) for name in ('slider_wake', 'keyboard_wake', 'fingerprint')}},
             'features': features, 'platform': platform}
 
 
@@ -361,7 +374,9 @@ def main():
         if args.restore_only:
             restore_settings(rotation, keyboard)
             return
-        controller = Controller(rotation, keyboard=keyboard)
+        from hardware import Hardware
+        hardware = Hardware()
+        controller = Controller(rotation, keyboard=keyboard, hardware=hardware)
         store = ConfigStore(args.state_dir)
         instance = str(uuid.uuid4())
         stopping = False
@@ -396,20 +411,30 @@ def main():
                     atomic_json_write(status_path(), make_status(store, controller, instance, opened, device_error))
                 except (ValueError, OSError):
                     LOG.exception('Could not publish status')
-                if stream is None:
+                inputs = ([stream] if stream is not None else []) + hardware.descriptors()
+                if not inputs:
                     time.sleep(2)
                 else:
                     try:
-                        ready, _, _ = select.select([stream], [], [], 2)
-                        if ready:
-                            raw = stream.read(EVENT.size)
-                            if len(raw) != EVENT.size:
-                                stream.close()
-                                stream = None
+                        ready, _, _ = select.select(inputs, [], [], 2)
+                        for source in ready:
+                            current_open = is_open(stream) if stream is not None else None
+                            if source is stream:
+                                raw = stream.read(EVENT.size)
+                                if len(raw) != EVENT.size:
+                                    stream.close()
+                                    stream = None
+                                else:
+                                    _, _, kind, code, value = EVENT.unpack(raw)
+                                    hardware.event('slider', kind, code, value, current_open)
+                            else:
+                                hardware.consume(source, current_open)
                     except OSError:
-                        stream.close()
-                        stream = None
+                        if stream is not None:
+                            stream.close()
+                            stream = None
         finally:
+            hardware.close()
             if stream is not None:
                 stream.close()
             for attempt in range(3):

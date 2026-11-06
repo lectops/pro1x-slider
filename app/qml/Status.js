@@ -15,7 +15,10 @@ function heading(snapshot, saving, brightnessPending) {
     if (snapshot.config.enabled && (
             (snapshot.config.backlight.enabled && !status.capabilities.backlight) ||
             (snapshot.config.rotation.enabled && !status.capabilities.rotation) ||
-            (snapshot.config.keyboard.hide_when_open && !status.capabilities.keyboard)))
+            (snapshot.config.keyboard.hide_when_open && !status.capabilities.keyboard) ||
+            (snapshot.config.wake.slider_open && !status.capabilities.slider_wake) ||
+            (snapshot.config.wake.keyboard && !status.capabilities.keyboard_wake) ||
+            (!snapshot.config.fingerprint.wake_screen && !status.capabilities.fingerprint)))
         return "Some settings are unavailable"
     if (status.applied_revision !== snapshot.config.revision) return "Pending · applying settings"
     return snapshot.config.enabled ? "Settings applied" : "Paused · overrides restored"
@@ -39,6 +42,8 @@ function detail(snapshot) {
 function feature(snapshot, name) {
     if (snapshot.backend !== "running" || !snapshot.status) return "Awaiting a fresh watcher report"
     var feature = snapshot.status.features[name]
+    if (name === "fingerprint" && feature.state === "disabled") return "System fingerprint wake behavior"
+    if (name === "fingerprint" && feature.state === "active") return "Fingerprint wake blocked"
     var names = {active: "Active", idle: "Idle", disabled: "Disabled", waiting: "Waiting", error: "Needs attention", unsupported: "Unsupported"}
     var text = names[feature.state] || "Unknown"
     if (!snapshot.status.capabilities[name] && feature.state !== "unsupported") text += " · unavailable on this system"

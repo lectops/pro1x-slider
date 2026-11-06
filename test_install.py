@@ -49,6 +49,7 @@ class InstallerTests(unittest.TestCase):
         self.platform_failure = False
         self.old_present = True
         self.native_present = False
+        self.helpers = {}
         self.watcher_enabled = self.watcher_active = True
         self.restore_removes_journals = True
         stack = ExitStack()
@@ -74,14 +75,15 @@ class InstallerTests(unittest.TestCase):
 
     def fake_run(self, *command, check=True):
         self.commands.append(command)
-        if install.GUI_UNIT in command:
+        gui_unit = next((arg for arg in command if arg.startswith('lomiri-app-launch--application-click--' + install.APP_ID)), None)
+        if gui_unit:
             if 'show' in command:
                 if self.fail_gui_inspection:
                     return self.result(command, 1, stderr='User manager unavailable')
                 state = 'LoadState=' + ('loaded' if self.gui_loaded else 'not-found')
                 state += '\nActiveState=' + self.gui_active_state + '\n'
                 return self.result(command, 0 if self.gui_loaded else 1, state)
-            if command[-2:] == ('stop', install.GUI_UNIT):
+            if command[-2:] == ('stop', gui_unit):
                 if self.fail_gui_stop:
                     raise RuntimeError('Native GUI could not stop')
                 if not self.gui_stop_noop:
@@ -101,7 +103,7 @@ class InstallerTests(unittest.TestCase):
         if command[:2] == ('systemd-analyze', 'verify') and self.fail_verify:
             raise RuntimeError('Invalid unit payload')
         if command[:2] == ('click', 'install'):
-            self.gui = install.VERSION  # Hooks may partly complete before an error.
+            self.gui = Path(command[-1]).name.removeprefix(install.APP_ID + '_').removesuffix('_all.click')  # Hooks can partly complete.
             if self.fail_gui:
                 self.fail_gui = False
                 raise RuntimeError('Click hook failed')
@@ -128,6 +130,22 @@ class InstallerTests(unittest.TestCase):
             return self.result(command, 1)
         if self.fail_native_restore and command[-2:] == ('start', install.NATIVE):
             raise RuntimeError('Previous native helper failed to restart')
+        helper = next((name for name in install.HELPERS if name in command), None)
+        if helper:
+            state = self.helpers.get(helper, {'present': False, 'enabled': False, 'active': False})
+            if 'show' in command:
+                return self.result(command, 0 if state['present'] else 1, 'loaded\n' if state['present'] else 'not-found\n')
+            if 'is-enabled' in command:
+                return self.result(command, 0 if state['enabled'] else 1, 'enabled\n' if state['enabled'] else 'disabled\n')
+            if 'is-active' in command:
+                return self.result(command, 0 if state['active'] else 1)
+            if 'disable' in command:
+                state.update(enabled=False, active=False)
+            elif 'enable' in command:
+                state['enabled'] = True
+            elif 'start' in command:
+                state['active'] = True
+            return self.result(command)
         if 'show' in command:
             if install.WATCHER in command:
                 present = self.unit.exists()
@@ -175,7 +193,7 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(self.gui, install.VERSION)
         self.assertEqual(load_config(config_path(self.home))['rotation']['direction'], 'keyboard')
         record = json.loads(install.RECORD.read_text())
-        self.assertEqual(record['version'], '0.3.0')
+        self.assertEqual(record['version'], install.VERSION)
         self.assertEqual(record['config_migration'], 'defaults')
         self.assertEqual(record['click_sha256'], hashlib.sha256((self.source / install.CLICK_NAME).read_bytes()).hexdigest())
         self.assertIn(('click', 'install', '--user=phablet', '--allow-unauthenticated',
@@ -247,7 +265,7 @@ class InstallerTests(unittest.TestCase):
         self.assertFalse(self.base.exists() or self.unit.exists() or self.platform.exists())
         self.assertIsNone(self.gui)
         self.assertIn(('systemctl', 'start', install.OLD), self.commands)
-        self.assertTrue(config_path(self.home).exists())
+        self.assertFalse(config_path(self.home).exists())
 
     def test_partial_click_failure_is_removed_without_disabling_old_service(self):
         self.fail_gui = True
@@ -382,7 +400,7 @@ class InstallerTests(unittest.TestCase):
                 before = len(self.click_commands)
                 with self.assertRaisesRegex(RuntimeError, 'Native GUI could not stop'):
                     operation()
-                self.assertEqual(self.click_commands[before:], [])
+                self.assertFalse(any(c[1] in ('install', 'unregister') for c in self.click_commands[before:]))
 
     def test_upgrade_preserves_accepted_config_checkpoint_and_journals(self):
         self.install()
@@ -553,6 +571,60 @@ class InstallerTests(unittest.TestCase):
         self.assertEqual(self.gui_active_state, 'inactive')
         self.assertFalse(any(install.GUI_UNIT in command and any(action in command for action in
                             ('start', 'restart', 'enable')) for command in self.commands[before:]))
+
+    def prepare_v03_with_helpers(self):
+        self.install()
+        record = json.loads(install.RECORD.read_text())
+        record.update(version='0.3.0', gui_version='0.3.0')
+        record.pop('helpers', None)
+        previous_click = self.base / (install.APP_ID + '_0.3.0_all.click')
+        previous_click.write_bytes(b'actual previous version fixture')
+        record['click_sha256'] = hashlib.sha256(previous_click.read_bytes()).hexdigest()
+        install.RECORD.write_text(json.dumps(record))
+        (self.base / install.CLICK_NAME).unlink()
+        old = default_config()
+        old['schema_version'] = 1
+        old.pop('wake'); old.pop('fingerprint')
+        old['rotation']['direction'] = 'reversed'
+        raw = json.dumps(old, indent=2).encode()
+        config_path(self.home).write_bytes(raw)
+        (self.base / 'state/last-known-good.json').write_bytes(raw)
+        self.gui, self.gui_loaded, self.gui_active_state = '0.3.0', True, 'active'
+        self.helpers = {name: {'present': True, 'enabled': True, 'active': True} for name in install.HELPERS}
+        return raw, previous_click
+
+    def test_v03_upgrade_adopts_helpers_and_uninstall_restores_them(self):
+        self.prepare_v03_with_helpers()
+        before = len(self.commands)
+        install.upgrade(self.source)
+        self.assertEqual(self.gui, install.VERSION)
+        config = load_config(config_path(self.home))
+        self.assertEqual(config['rotation']['direction'], 'reversed')
+        self.assertEqual(config['wake'], {'slider_open': True, 'keyboard': True})
+        self.assertFalse(config['fingerprint']['wake_screen'])
+        self.assertTrue(all(not state['active'] and not state['enabled'] for state in self.helpers.values()))
+        commands = self.commands[before:]
+        stop_old_gui = next(i for i, command in enumerate(commands) if command[-2:] == (
+            'stop', install.GUI_UNIT.replace('_' + install.VERSION + '--', '_0.3.0--')))
+        start = commands.index(('systemctl', 'enable', '--now', install.WATCHER))
+        self.assertLess(stop_old_gui, start)
+        for name in install.HELPERS:
+            disable = next(i for i, command in enumerate(commands) if command[-3:] == ('disable', '--now', name))
+            self.assertLess(disable, start)
+        install.uninstall()
+        self.assertTrue(all(state['active'] and state['enabled'] for state in self.helpers.values()))
+
+    def test_failed_v03_upgrade_restores_old_click_preferences_and_helpers(self):
+        raw, previous_click = self.prepare_v03_with_helpers()
+        self.fail_start = True
+        with self.assertRaisesRegex(RuntimeError, 'watcher could not start'):
+            install.upgrade(self.source)
+        self.assertEqual(self.gui, '0.3.0')
+        self.assertEqual(previous_click.read_bytes(), b'actual previous version fixture')
+        self.assertEqual(config_path(self.home).read_bytes(), raw)
+        self.assertEqual((self.base / 'state/last-known-good.json').read_bytes(), raw)
+        self.assertTrue(all(state['active'] and state['enabled'] for state in self.helpers.values()))
+        self.assertFalse(list(self.root.glob('pro1x-slider-rollback-*')))
 
     def test_failed_upgrade_restores_previously_disabled_watcher_state(self):
         self.install()

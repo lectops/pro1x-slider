@@ -115,7 +115,7 @@ MainView {
             })
         }
         onError: {
-            console.error("Slider Settings: " + traceback)
+            console.error("Pro1 X Tweaks: " + traceback)
             if (root.saving) {
                 root.saveError = "Could not complete the settings request. " + traceback
                 root.model = {config: root.config, status: root.model.status, backend: root.model.backend, error: root.saveError}
@@ -131,7 +131,7 @@ MainView {
         id: page
         anchors.fill: parent
         header: PageHeader {
-            title: "Slider Settings"
+            title: "Pro1 X Tweaks"
             trailingActionBar.actions: [Action { text: "About"; iconName: "info"; onTriggered: PopupUtils.open(aboutDialog) }]
         }
         Flickable {
@@ -164,8 +164,8 @@ MainView {
                 }
                 SettingSwitch {
                     width: parent.width
-                    title: "Slider automation"
-                    description: "Pause to restore preferences and turn the managed keyboard light off. Your feature choices are kept."
+                    title: "Tweaks enabled"
+                    description: "Pause to restore system behavior, including fingerprint wake. Your feature choices are kept."
                     checked: root.config ? root.config.enabled : false
                     enabled: root.controlsEnabled
                     onToggled: root.save({enabled: value})
@@ -259,9 +259,57 @@ MainView {
                             onFocused: root.reveal(this)
                         }
                     }
+                    Column {
+                        width: panels.panelWidth
+                        spacing: units.gu(1)
+                        Label { text: "SCREEN WAKE"; textSize: Label.Small; font.bold: true }
+                        SettingSwitch {
+                            objectName: "sliderWakeSwitch"
+                            width: parent.width
+                            title: "Wake when opening keyboard"
+                            description: Status.feature(root.model, "slider_wake")
+                            checked: root.config ? root.config.wake.slider_open : false
+                            enabled: root.controlsEnabled
+                            onToggled: root.save({wake: {slider_open: value}})
+                            onFocused: root.reveal(this)
+                        }
+                        SettingSwitch {
+                            objectName: "keyboardWakeSwitch"
+                            width: parent.width
+                            title: "Wake with a keyboard key"
+                            description: "While the keyboard is open. " + Status.feature(root.model, "keyboard_wake")
+                            checked: root.config ? root.config.wake.keyboard : false
+                            enabled: root.controlsEnabled && (checked || (root.model.backend === "running" && root.model.status.capabilities.keyboard_wake))
+                            onToggled: root.save({wake: {keyboard: value}})
+                            onFocused: root.reveal(this)
+                        }
+                        Label {
+                            width: parent.width
+                            visible: root.model.backend === "running" && !root.model.status.capabilities.keyboard_wake
+                            text: "Key wake needs the separate keyboard-wake kernel installation."
+                            textSize: Label.Small
+                            opacity: 0.8
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                    Column {
+                        width: panels.panelWidth
+                        spacing: units.gu(1)
+                        Label { text: "FINGERPRINT"; textSize: Label.Small; font.bold: true }
+                        SettingSwitch {
+                            objectName: "fingerprintWakeSwitch"
+                            width: parent.width
+                            title: "Wake with fingerprint touch"
+                            description: "Turn off to keep the screen dark. Fingerprint unlock still works after waking normally. " + Status.feature(root.model, "fingerprint")
+                            checked: root.config ? root.config.fingerprint.wake_screen : true
+                            enabled: root.controlsEnabled
+                            onToggled: root.save({fingerprint: {wake_screen: value}})
+                            onFocused: root.reveal(this)
+                        }
+                    }
                 }
                 Rectangle { width: parent.width; height: units.dp(1); color: "#c9d2ce" }
-                Label { width: parent.width; text: "Each feature works independently. Closing the slider restores preferences owned by the watcher."; textSize: Label.Small; opacity: 0.8; wrapMode: Text.WordWrap }
+                Label { width: parent.width; text: "Slider settings follow the keyboard position. Fingerprint wake control also applies when the keyboard is closed."; textSize: Label.Small; opacity: 0.8; wrapMode: Text.WordWrap }
                 Button {
                     text: "Restore defaults"
                     enabled: root.controlsEnabled
@@ -276,8 +324,8 @@ MainView {
         id: resetDialog
         Dialog {
             id: resetPopup
-            title: "Restore slider defaults?"
-            text: root.dimmingAvailable ? "Enable all features, set brightness to 100%, and use the keyboard landscape direction." : "Enable all features and use the keyboard landscape direction."
+            title: "Restore tweak defaults?"
+            text: "Enable keyboard light, landscape, and keyboard hiding. Turn off slider/key wake and restore normal fingerprint wake behavior."
             Button { text: "Restore defaults"; color: "#4daca7"; onClicked: { PopupUtils.close(resetPopup); root.defaults() } }
             Button { text: "Cancel"; onClicked: PopupUtils.close(resetPopup) }
         }
@@ -286,8 +334,8 @@ MainView {
         id: aboutDialog
         Dialog {
             id: aboutPopup
-            title: "Slider Settings"
-            text: "Version 0.3.0\nFor the F(x)tec Pro1-X on Ubuntu Touch.\n\nPreferences are stored locally. The companion watcher applies them without restarting the service.\n\nGPL-3.0-only"
+            title: "Pro1 X Tweaks"
+            text: "Version 0.4.1\nFor the F(x)tec Pro1-X on Ubuntu Touch.\n\nPreferences are stored locally. The companion watcher applies them without restarting the service.\n\nGPL-3.0-only"
             Button { text: "Close"; onClicked: PopupUtils.close(aboutPopup) }
         }
     }

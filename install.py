@@ -1,12 +1,13 @@
 #!/usr/bin/python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Install Slider Settings and its reversible Ubuntu Touch integration."""
+"""Install Pro1 X Tweaks and its reversible Ubuntu Touch integration."""
 import argparse
 import hashlib
 import json
 import os
 from pathlib import Path
 import pwd
+import re
 import shutil
 import stat
 import subprocess
@@ -26,7 +27,8 @@ NATIVE = 'keypad-slide.service'
 CLICK_NAME = APP_ID + '_' + VERSION + '_all.click'
 GUI_UNIT = ('lomiri-app-launch--application-click--' + APP_ID
             + '_slider-settings_' + VERSION + '--.service')
-FILES = ('slider.py', 'slider_common.py', 'qml_patch.py', 'install.py',
+HELPERS = ('pro1x-wake.service', 'pro1x-fingerprint-no-wake.service')
+FILES = ('slider.py', 'slider_common.py', 'hardware.py', 'keyboard_gate.py', 'config_migration.py', 'qml_patch.py', 'install.py',
          WATCHER, PLATFORM, 'LICENSE', 'NOTICE')
 OVERLAY = BASE / 'OrientedShell.qml'
 RECORD = BASE / 'installation.json'
@@ -34,50 +36,22 @@ PLATFORM_RECORD = BASE / 'platform.json'
 JOURNALS = ('saved-orientation.json', 'saved-keyboard.json')
 
 # Executed as phablet. No privileged process traverses or writes home paths.
-# Linking a completed file prevents replacement of a concurrent GUI save.
+# The migration journal preserves preimages and refuses conflicting rollback.
 SEED_CONFIG = r"""
-import os, sys, tempfile
-from pathlib import Path
+import json, sys
 sys.path.insert(0, sys.argv[1])
-from slider_common import config_path, default_config, load_config, save_config
-base, home = Path(sys.argv[1]), Path(sys.argv[2])
-path = config_path(home)
-if os.path.lexists(path):
-    print('preserved')
-    raise SystemExit(0)
-checkpoint = base / 'state/last-known-good.json'
-if os.path.lexists(checkpoint):
-    config = load_config(checkpoint)
-    origin = 'last-known-good'
+from config_migration import prepare
+print(prepare(sys.argv[1], sys.argv[2], json.loads(sys.argv[3])))
+"""
+
+PREFERENCES_ACTION = r"""
+import sys
+sys.path.insert(0, sys.argv[1])
+from config_migration import rollback, commit
+if sys.argv[3] == 'rollback':
+    rollback(sys.argv[1], sys.argv[2])
 else:
-    config = default_config()
-    legacy = base / 'state/landscape-orientation'
-    origin = 'defaults'
-    if os.path.lexists(legacy):
-        if legacy.is_symlink():
-            raise ValueError('Refusing a symlink in the legacy direction configuration')
-        with legacy.open() as stream:
-            raw = stream.read(129)
-        if len(raw) > 128:
-            raise ValueError('Saved landscape direction is too large')
-        direction = raw.strip()
-        mapping = {'LandscapeOrientation': 'reversed', 'InvertedLandscapeOrientation': 'keyboard'}
-        if direction not in mapping:
-            raise ValueError('Invalid saved landscape direction')
-        config['rotation']['direction'] = mapping[direction]
-        origin = 'legacy-direction'
-path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-fd, temporary = tempfile.mkstemp(prefix='.installer-config-', dir=path.parent)
-os.close(fd)
-try:
-    save_config(temporary, config)
-    try:
-        os.link(temporary, path)
-    except FileExistsError:
-        origin = 'preserved'
-finally:
-    os.unlink(temporary)
-print(origin)
+    commit(sys.argv[1])
 """
 
 
@@ -124,21 +98,23 @@ def user_systemctl(*arguments, check=True):
 
 def stop_gui():
     """Stop the native app service; Click's app-stop hook can leave it alive."""
+    version = installed_gui() or VERSION
+    unit = GUI_UNIT.replace('_' + VERSION + '--.service', '_' + version + '--.service')
     def active_state():
-        result = user_systemctl('show', GUI_UNIT, '-p', 'LoadState', '-p', 'ActiveState', check=False)
+        result = user_systemctl('show', unit, '-p', 'LoadState', '-p', 'ActiveState', check=False)
         state = dict(line.split('=', 1) for line in result.stdout.splitlines() if '=' in line)
         if state.get('LoadState') == 'not-found':
             return None
         if result.returncode or state.get('LoadState') != 'loaded' or not state.get('ActiveState'):
-            raise RuntimeError('Cannot inspect running Slider Settings app: '
+            raise RuntimeError('Cannot inspect running Pro1 X Tweaks app: '
                                + (result.stderr.strip() or result.stdout.strip() or 'user manager unavailable'))
         return state['ActiveState']
 
     if active_state() is None:
         return
-    user_systemctl('stop', GUI_UNIT)
+    user_systemctl('stop', unit)
     if active_state() not in (None, 'inactive', 'failed'):
-        raise RuntimeError('Slider Settings app is still running after its user service was stopped')
+        raise RuntimeError('Pro1 X Tweaks app is still running after its user service was stopped')
 
 
 def same_file():
@@ -224,6 +200,12 @@ def restore_services(record):
         operations.append((user_systemctl, ('enable', NATIVE)))
     if native.get('active', False):
         operations.append((user_systemctl, ('start', NATIVE)))
+    for name in HELPERS:
+        previous = record.get('helpers', {}).get(name, {})
+        if previous.get('enabled'):
+            operations.append((user_systemctl, ('enable', name)))
+        if previous.get('active'):
+            operations.append((user_systemctl, ('start', name)))
     errors = []
     for command, arguments in operations:
         try:
@@ -273,22 +255,22 @@ def installed_gui():
         raise RuntimeError('Invalid Click package list')
     matches = [entry for entry in manifests if entry.get('name') == APP_ID]
     if len(matches) > 1:
-        raise RuntimeError('Multiple Slider Settings registrations')
+        raise RuntimeError('Multiple Pro1 X Tweaks registrations')
     if matches:
         version = matches[0].get('version')
-        if not isinstance(version, str) or not version:
-            raise RuntimeError('Invalid Slider Settings registration version')
+        if not isinstance(version, str) or not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+(?:[-+~][A-Za-z0-9.]+)?', version):
+            raise RuntimeError('Invalid Pro1 X Tweaks registration version')
         return version
     return None
 
 
-def install_gui(package):
+def install_gui(package, version=VERSION):
     # Click unpacks as clickpkg and runs registration hooks for phablet. This is
     # the native path on 24.04, where the old PackageKit/pkcon is absent.
     stop_gui()
     native_click('install', '--user=phablet', '--allow-unauthenticated', str(package), show_stdout=True)
-    if installed_gui() != VERSION:
-        raise RuntimeError('Slider Settings was not registered for phablet')
+    if installed_gui() != version:
+        raise RuntimeError('Pro1 X Tweaks was not registered for phablet')
 
 
 def remove_gui():
@@ -296,7 +278,7 @@ def remove_gui():
     if installed_gui() is not None:
         native_click('unregister', '--user=phablet', APP_ID, show_stdout=True)
         if installed_gui() is not None:
-            raise RuntimeError('Slider Settings registration remains after removal')
+            raise RuntimeError('Pro1 X Tweaks registration remains after removal')
 
 
 def payloads(source):
@@ -304,7 +286,7 @@ def payloads(source):
     manifest = json.loads(native_click('info', str(source / CLICK_NAME)).stdout)
     if any(manifest.get(key) != value for key, value in
            (('name', APP_ID), ('version', VERSION), ('architecture', 'all'))):
-        raise RuntimeError('Unexpected Slider Settings Click package identity')
+        raise RuntimeError('Unexpected Pro1 X Tweaks Click package identity')
     run('systemd-analyze', 'verify', '--man=no', str(source / WATCHER), str(source / PLATFORM))
     return payload
 
@@ -312,7 +294,13 @@ def payloads(source):
 def seed_config():
     account = pwd.getpwnam('phablet')
     return phablet('/usr/bin/python3', '-I', '-c', SEED_CONFIG,
-                   str(BASE), account.pw_dir).stdout.strip()
+                   str(BASE), account.pw_dir, json.dumps(read_record().get('helpers', {}))).stdout.strip()
+
+
+def preferences_action(action):
+    account = pwd.getpwnam('phablet')
+    phablet('/usr/bin/python3', '-I', '-c', PREFERENCES_ACTION,
+            str(BASE), account.pw_dir, action)
 
 
 def ensure_state(create=True):
@@ -368,7 +356,7 @@ def retain_recovery_source(backup, payload):
     recovery = backup / ('recovery-' + VERSION)
     recovery.mkdir(mode=0o755)
     recovery.chmod(0o755)
-    for name in ('slider.py', 'slider_common.py', 'qml_patch.py'):
+    for name in ('slider.py', 'slider_common.py', 'hardware.py', 'keyboard_gate.py', 'config_migration.py', 'qml_patch.py'):
         write(recovery / name, payload[name])
     return recovery
 
@@ -379,6 +367,10 @@ def disable_previous(record):
     native = record.get('keypad_slide', {})
     if native.get('enabled') or native.get('active'):
         user_systemctl('disable', '--now', NATIVE)
+    for name in HELPERS:
+        previous = record.get('helpers', {}).get(name, {})
+        if previous.get('enabled') or previous.get('active'):
+            user_systemctl('disable', '--now', name)
 
 
 def apply_payload(payload, stock, overlay, record):
@@ -417,13 +409,14 @@ def install(source):
     overlay = patched(stock)
     payload = payloads(source)
     if installed_gui() is not None:
-        raise RuntimeError('Remove the standalone Slider Settings app before first combined installation')
+        raise RuntimeError('Remove the standalone Pro1 X Tweaks app before first combined installation')
     backlight = service_state(OLD)
     native = service_state(NATIVE, native_command)
     record = {'stock_sha256': STOCK_SHA256,
               'backlight_present': backlight['present'],
               'backlight_enabled': backlight['enabled'],
-              'backlight_active': backlight['active'], 'keypad_slide': native}
+              'backlight_active': backlight['active'], 'keypad_slide': native,
+              'helpers': {name: service_state(name, native_command) for name in HELPERS}}
     stop_gui()
     BASE.mkdir(mode=0o755)
     BASE.chmod(0o755)
@@ -437,9 +430,10 @@ def install(source):
         install_gui(BASE / CLICK_NAME)
         disable_previous(record)
         start_package()
+        preferences_action('commit')
     except Exception as original:
         errors = []
-        for callback in (stop_package, lambda: restore_previous(record),
+        for callback in (stop_package, lambda: preferences_action('rollback'), lambda: restore_previous(record),
                          remove_gui if gui_attempted else lambda: None):
             try:
                 callback()
@@ -449,7 +443,7 @@ def install(source):
             raise RuntimeError(str(original) + '; recovery incomplete, files retained: ' + '; '.join(errors)) from original
         remove_files()
         raise
-    print('Slider Settings and backend installed. Reload Lomiri or reboot to apply interface changes.')
+    print('Pro1 X Tweaks and backend installed. Reload Lomiri or reboot to apply interface changes.')
     print('Full removal: sudo python3 ' + str(BASE / 'install.py') + ' uninstall')
 
 
@@ -463,7 +457,7 @@ def uninstall():
     remove_gui()
     stop_package()
     remove_files()
-    print('Slider Settings and backend removed; previous slider services restored.')
+    print('Pro1 X Tweaks and backend removed; previous slider services restored.')
     print('Saved app preferences remain in the phablet home. Reload Lomiri or reboot.')
 
 
@@ -472,6 +466,9 @@ def upgrade(source):
     if run('systemctl', 'is-active', 'pro1x-rotation.service', check=False).returncode == 0:
         raise RuntimeError('Stop the old rotation watcher before upgrading')
     updated = record.copy()
+    newly_managed_helpers = 'helpers' not in record
+    if newly_managed_helpers:
+        updated['helpers'] = {name: service_state(name, native_command) for name in HELPERS}
     newly_managed_native = 'keypad_slide' not in record
     if newly_managed_native:
         updated['keypad_slide'] = service_state(NATIVE, native_command)
@@ -484,10 +481,11 @@ def upgrade(source):
         patched(Path(TARGET).read_bytes())
     payload = payloads(source)
     previous_gui = installed_gui()
-    previous_click = BASE / CLICK_NAME
+    previous_click_name = APP_ID + '_' + (previous_gui or VERSION) + '_all.click'
+    previous_click = BASE / previous_click_name
     if previous_gui is not None:
-        if previous_gui != VERSION or not previous_click.exists():
-            raise RuntimeError('Cannot safely roll back the existing Slider Settings package')
+        if not previous_click.exists():
+            raise RuntimeError('Cannot safely roll back the existing Pro1 X Tweaks package')
         safe_file(previous_click)
         if hashlib.sha256(previous_click.read_bytes()).hexdigest() != record.get('click_sha256'):
             raise RuntimeError('Stored Click package does not match installation receipt')
@@ -496,7 +494,7 @@ def upgrade(source):
         previous_services[PLATFORM] = service_state(PLATFORM)
     stop_gui()
     ensure_state()
-    names = tuple(dict.fromkeys((*FILES, CLICK_NAME, 'OrientedShell.original.qml',
+    names = tuple(dict.fromkeys((*FILES, CLICK_NAME, previous_click_name, 'OrientedShell.original.qml',
                                 'OrientedShell.qml', 'installation.json', 'platform.json')))
     backup = Path(tempfile.mkdtemp(prefix='pro1x-slider-rollback-', dir=BASE.parent))
     backup.chmod(0o700)
@@ -517,6 +515,7 @@ def upgrade(source):
         'to_version': VERSION, 'services': previous_services,
         'migrated_native': updated.get('keypad_slide') if newly_managed_native else None,
         'previous_gui_version': previous_gui,
+        'migrated_helpers': updated.get('helpers') if newly_managed_helpers else None,
     })
     gui_attempted = False
     try:
@@ -524,11 +523,12 @@ def upgrade(source):
         apply_payload(payload, stock, overlay, updated)
         updated['config_migration'] = seed_config()
         write_json(RECORD, updated)
-        if previous_gui is None or (backup / CLICK_NAME).read_bytes() != payload[CLICK_NAME]:
+        if previous_gui != VERSION or (backup / previous_click_name).read_bytes() != payload[CLICK_NAME]:
             gui_attempted = True
             install_gui(BASE / CLICK_NAME)
         disable_previous(updated)
         start_package()
+        preferences_action('commit')
     except Exception as original:
         recovery_source = None
         recovery_error = None
@@ -540,6 +540,7 @@ def upgrade(source):
                     recover_pending(recovery_source / 'slider.py')
                 except Exception as error:
                     recovery_error = str(error)
+            preferences_action('rollback')
             for name in names:
                 old, destination = backup / name, BASE / name
                 if old.exists():
@@ -557,8 +558,10 @@ def upgrade(source):
                 if previous_gui is None:
                     remove_gui()
                 else:
-                    install_gui(BASE / CLICK_NAME)
+                    install_gui(BASE / previous_click_name, previous_gui)
             if recovery_error is None:
+                if newly_managed_helpers:
+                    restore_services({'helpers': updated['helpers']})
                 if newly_managed_native:
                     restore_services({'keypad_slide': updated['keypad_slide']})
                 restore_package_services(previous_services)
@@ -579,7 +582,7 @@ def upgrade(source):
         shutil.rmtree(backup)
         raise
     shutil.rmtree(backup)
-    print('Slider Settings and backend upgraded; preferences and recovery journals retained.')
+    print('Pro1 X Tweaks and backend upgraded; preferences and recovery journals retained.')
 
 
 def main():

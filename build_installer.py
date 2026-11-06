@@ -14,17 +14,17 @@ from slider_common import APP_ID, VERSION
 CLICK_NAME = APP_ID + '_' + VERSION + '_all.click'
 FILES = (
     '.gitignore', 'README.md', 'CHANGELOG.md', 'LICENSE', 'NOTICE',
-    'slider.py', 'slider_common.py', 'qml_patch.py', 'install.py',
+    'slider.py', 'slider_common.py', 'hardware.py', 'keyboard_gate.py', 'config_migration.py', 'qml_patch.py', 'install.py',
     'pro1x-slider.service', 'pro1x-slider-platform.service',
     'install-phone.sh', 'phone_checks.py', 'test_slider.py',
-    'test_install.py', 'test_package.py', 'test_backend.py', 'test_gui_bridge.py',
+    'test_install.py', 'test_package.py', 'test_backend.py', 'test_gui_bridge.py', 'test_hardware.py', 'test_config_migration.py',
     'build_installer.py', 'build_click.py', 'tools/stage_ui_qa.py',
     'docs/VALIDATION.md', 'docs/CONTRACT.md',
 )
 
 LOADER = '''#!/usr/bin/python3
 # SPDX-License-Identifier: GPL-3.0-only
-"""Pro1-X slider @VERSION@: self-contained source and installer.
+"""Pro1 X Tweaks @VERSION@: self-contained source and installer.
 
 Run: python3 pro1x-slider-@VERSION@.py
 Inspect source: python3 pro1x-slider-@VERSION@.py --extract DIRECTORY
@@ -101,7 +101,12 @@ def build(source, output, click_package=None):
                              and path.suffix not in ('.pyc', '.pyo')))
     if not app_files:
         raise ValueError('App source is missing')
-    files = (*FILES, *app_files, CLICK_NAME)
+    reference_files = tuple(sorted(str(path.relative_to(source))
+                                   for folder in ('kernel', 'docs/legacy-helpers')
+                                   for path in (source / folder).rglob('*')
+                                   if path.is_file() and '__pycache__' not in path.parts
+                                   and path.suffix not in ('.pyc', '.pyo')))
+    files = (*FILES, *app_files, *reference_files, CLICK_NAME)
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
         for name in files:

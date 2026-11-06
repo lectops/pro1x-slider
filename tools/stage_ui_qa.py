@@ -22,24 +22,26 @@ FIXTURE_BRIDGE = '''# Staging-only memory fixture: no file or device I/O.
 import copy
 import time
 
-_config = {"schema_version": 1, "revision": "visual-qa", "enabled": True,
+_config = {"schema_version": 2, "revision": "visual-qa", "enabled": True,
            "backlight": {"enabled": True, "brightness_percent": 70},
            "rotation": {"enabled": True, "direction": "keyboard"},
-           "keyboard": {"hide_when_open": True}}
+           "keyboard": {"hide_when_open": True},
+            "wake": {"slider_open": True, "keyboard": True},
+            "fingerprint": {"wake_screen": False}}
 
 def snapshot():
     config = copy.deepcopy(_config)
     return {"config": config, "backend": "running", "error": None, "dimming_known": True,
-            "status": {"schema_version": 1, "protocol_version": 1,
-                "backend_version": "0.3.0", "instance_id": "visual-fixture",
+            "status": {"schema_version": 2, "protocol_version": 2,
+                "backend_version": "0.4.1", "instance_id": "visual-fixture",
                 "heartbeat_monotonic": time.monotonic(),
                 "observed_revision": config["revision"],
                 "applied_revision": config["revision"], "slider": "open",
                 "state": "active", "config": copy.deepcopy(config),
                 "config_error": None,
-                "capabilities": dict({name: True for name in ("backlight", "rotation", "keyboard")}, backlight_dimming=False),
+                "capabilities": dict({name: True for name in ("backlight", "rotation", "keyboard", "slider_wake", "keyboard_wake", "fingerprint")}, backlight_dimming=False),
                 "features": {name: {"state": "active", "message": ""}
-                             for name in ("backlight", "rotation", "keyboard")},
+                             for name in ("backlight", "rotation", "keyboard", "slider_wake", "keyboard_wake", "fingerprint")},
                 "platform": {"overlay": "mounted", "reload_required": None}}}
 
 def resume():
@@ -72,7 +74,7 @@ Window {
     width: units.gu(45)
     height: units.gu(80)
     color: "white"
-    title: "Slider Settings visual QA"
+    title: "Pro1 X Tweaks visual QA"
     Item {
         id: viewport
         anchors.centerIn: parent
@@ -270,13 +272,13 @@ save_config(fixture_preferences, default_config())
 def fixture_heartbeat():
     while True:
         config = load_config(fixture_preferences)
-        atomic_json_write(fixture_status, {"schema_version":1, "protocol_version":1,
-            "backend_version":"0.3.0", "instance_id":"isolated-dimming-qa",
+        atomic_json_write(fixture_status, {"schema_version":2, "protocol_version":2,
+            "backend_version":"0.4.1", "instance_id":"isolated-dimming-qa",
             "heartbeat_monotonic":time.monotonic(), "observed_revision":config["revision"],
             "applied_revision":config["revision"], "slider":"open", "state":"active",
             "config":config, "config_error":None,
-            "capabilities":{"backlight":True, "rotation":True, "keyboard":True, "backlight_dimming":True},
-            "features":{name:{"state":"active", "message":""} for name in ("backlight", "rotation", "keyboard")},
+            "capabilities":dict({name:True for name in ("backlight", "rotation", "keyboard", "slider_wake", "keyboard_wake", "fingerprint")}, backlight_dimming=True),
+            "features":{name:{"state":"active", "message":""} for name in ("backlight", "rotation", "keyboard", "slider_wake", "keyboard_wake", "fingerprint")},
             "platform":{"overlay":"mounted", "reload_required":None}})
         time.sleep(0.25)
 threading.Thread(target=fixture_heartbeat, daemon=True).start()

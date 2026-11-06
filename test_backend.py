@@ -240,7 +240,7 @@ class BackendTests(unittest.TestCase):
         self.assertEqual(make_status(store, self.controller, 'test', False)['applied_revision'], self.config['revision'])
 
     def test_validation_rejects_bad_types_unknown_fields_and_versions(self):
-        changes = [('schema_version', True), ('schema_version', 2), ('revision', '../bad'), ('enabled', 1), ('extra', True)]
+        changes = [('schema_version', True), ('schema_version', 99), ('revision', '../bad'), ('enabled', 1), ('extra', True)]
         for key, value in changes:
             config = default_config()
             config[key] = value

@@ -1,0 +1,10 @@
+[Unit]
+Description=Pro1 X slider and hardware keyboard screen wake
+
+[Service]
+ExecStart=/usr/bin/python3 /home/phablet/.local/lib/pro1x-wake/wake.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

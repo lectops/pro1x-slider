@@ -9,21 +9,32 @@ import tempfile
 import uuid
 
 APP_ID = 'pro1x-slider.lectops'
-VERSION = '0.3.0'
-PROTOCOL_VERSION = SCHEMA_VERSION = 1
+VERSION = '0.4.1'
+PROTOCOL_VERSION = SCHEMA_VERSION = 2
+FEATURES = ('backlight', 'rotation', 'keyboard', 'slider_wake', 'keyboard_wake', 'fingerprint')
 MAX_JSON_BYTES = 16384
 
 def default_config():
-    return {'schema_version': 1, 'revision': str(uuid.uuid4()), 'enabled': True,
+    return {'schema_version': SCHEMA_VERSION, 'revision': str(uuid.uuid4()), 'enabled': True,
             'backlight': {'enabled': True, 'brightness_percent': 100},
             'rotation': {'enabled': True, 'direction': 'keyboard'},
-            'keyboard': {'hide_when_open': True}}
+            'keyboard': {'hide_when_open': True},
+            'wake': {'slider_open': False, 'keyboard': False},
+            'fingerprint': {'wake_screen': True}}
 
 def validate_config(value):
     def keys(obj, expected):
         if not isinstance(obj, dict) or set(obj) != set(expected):
             raise ValueError('Missing or unknown configuration fields')
-    keys(value, ('schema_version', 'revision', 'enabled', 'backlight', 'rotation', 'keyboard'))
+    # Read v0.3 preferences without changing their existing behavior. Only the
+    # installer adopts the separately installed wake helpers' preferences.
+    if isinstance(value, dict) and type(value.get('schema_version')) is int and value['schema_version'] == 1:
+        keys(value, ('schema_version', 'revision', 'enabled', 'backlight', 'rotation', 'keyboard'))
+        value = copy.deepcopy(value)
+        value.update(schema_version=SCHEMA_VERSION,
+                     wake={'slider_open': False, 'keyboard': False},
+                     fingerprint={'wake_screen': True})
+    keys(value, ('schema_version', 'revision', 'enabled', 'backlight', 'rotation', 'keyboard', 'wake', 'fingerprint'))
     if type(value['schema_version']) is not int or value['schema_version'] != SCHEMA_VERSION:
         raise ValueError('Unsupported configuration schema')
     if not isinstance(value['revision'], str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value['revision']):
@@ -31,7 +42,10 @@ def validate_config(value):
     keys(value['backlight'], ('enabled', 'brightness_percent'))
     keys(value['rotation'], ('enabled', 'direction'))
     keys(value['keyboard'], ('hide_when_open',))
-    for flag in (value['enabled'], value['backlight']['enabled'], value['rotation']['enabled'], value['keyboard']['hide_when_open']):
+    keys(value['wake'], ('slider_open', 'keyboard'))
+    keys(value['fingerprint'], ('wake_screen',))
+    for flag in (value['enabled'], value['backlight']['enabled'], value['rotation']['enabled'], value['keyboard']['hide_when_open'],
+                 value['wake']['slider_open'], value['wake']['keyboard'], value['fingerprint']['wake_screen']):
         if type(flag) is not bool:
             raise ValueError('Feature switches must be booleans')
     brightness = value['backlight']['brightness_percent']

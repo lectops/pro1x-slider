@@ -1,6 +1,19 @@
-Pro1-X slider backlight and orientation workaround
+Pro1 X Tweaks
 Copyright (C) 2026 lectops
 License: GNU General Public License, version 3 only (GPL-3.0-only).
+
+Separate kernel patch
+---------------------
+
+kernel/keyboard-wake.patch follows the Linux kernel's GPL-2.0-only license,
+not the application license above. The upstream license text is retained
+in kernel/LICENSE-GPL-2.0. The modified AW9523B driver includes code from
+the F(x)tec Pro1-X kernel and the rewritten Pro1 keyboard driver by:
+
+    Copyright (c) 2020 Tom Marshall <tdm.code@gmail.com>
+
+The patch preserves that source attribution. The independent userspace
+boot repacker remains part of the GPL-3.0-only tooling.
 
 Lomiri / Unity 8 attribution
 ----------------------------

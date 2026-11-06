@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.4.1 — development
+
+- Fix key wake remaining active when its switch was off with the patched kernel. Grab keyboard events while the display is dark and release them when it lights, using a dedicated display monitor.
+- Validate the hardware keyboard identity before filtering it, release on lost display state or shutdown, and retain a working on switch when monitoring fails.
+- Add regression coverage for display transitions, monitor failure, input identity, and toggle/pause cleanup.
+- Include the kernel patch's GPL-2.0-only attribution and license alongside the GPL-3.0-only app sources.
+- Prevent administrator-owned bytecode in the temporary extraction directory, which otherwise causes a cleanup error after a successful upgrade from the confined Terminal app.
+
+## v0.4.0 — development
+
+- Rename the app to **Pro1 X Tweaks**, retaining its Click identity and saved settings paths.
+- Add slider-open wake, keyboard-key wake, and fingerprint wake controls to the single watcher.
+- Report missing keyboard kernel support without attempting a kernel install.
+- Migrate the standalone wake/fingerprint helpers, preserving their startup states for rollback and uninstall.
+- Migrate schema-1 preferences to schema 2 with reversible preimages. Preserve existing choices; defaults do not add wake overrides.
+- Support upgrades from a different installed app version, including stopping that version’s GUI and restoring its verified Click package on failure.
+- Move the keyboard kernel patch, guarded repacker, and original helper snapshots into this repository.
+
 ## v0.3.0 — 2026-11-03
 
 - Bundle the native confined Slider Settings app with the complete slider package.

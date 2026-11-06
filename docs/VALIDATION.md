@@ -1,5 +1,35 @@
 # Validation and compatibility
 
+## Version 0.4 development checks — 5 November 2026
+
+The app is renamed **Pro1 X Tweaks**, with the existing Click identity and paths retained. The source integrates slider-open wake, key wake, and fingerprint wake control into the single watcher. The public keyboard patch and guarded repacker remain a separate kernel installation step.
+
+The initial v0.4.0 suite passed all 129 portable tests on the development Mac. The same suite passed on the phone, with the Node-dependent status-display test skipped there (128 pass, one skip). New coverage includes schema-1 migration, adoption of existing wake helpers, different-version Click rollback, exact preference/checkpoint restoration, preservation of concurrent preference changes, helper disable/restore ordering, wake-event gating, wake-only output, kernel capability failure, fingerprint input identity checks, grab release, and independent failures. Existing recovery and packaging checks continue to pass.
+
+Native `click build` succeeds for `pro1x-slider.lectops_0.4.0_all.click`. The generated app's QML, status logic, Python bridge, and shared protocol module were compared with the source. Qt 5 `qmllint` accepts the app and generated Lomiri overlay. Both systemd units pass verification; the phone still emits the pre-existing unrelated bluebinder unit warning. The isolated rotation harness passes all five checks. `phone_checks.py` now allows 120 seconds for the expanded portable suite and supports `--skip-portable` when it has already passed.
+
+The native compositor renders the renamed app and all six controls in isolated fixture storage. Portrait and landscape captures are inspected outside Git. These captures do not modify real settings or establish that the integrated watcher controls hardware correctly.
+
+The original standalone helpers were physically validated earlier on this phone: keyboard wake after a 90-second unplugged idle, slider wake, dark-screen touches remaining inactive, fingerprint touches leaving the screen dark, and fingerprint unlock after waking normally.
+
+The owner installed the combined v0.4.0 package. Installed backend and GUI source bytes match the bundle, the watcher is enabled/active, all six controls are available, the requested revision is applied, and both standalone user helpers are disabled/inactive. Their previous states remain recorded for rollback. The owner confirmed the renamed app and migrated choices. Its native process runs under `pro1x-slider.lectops_slider-settings_0.4.0 (enforce)`. A fresh v0.4 outside-write confinement probe and reboot test remain unrecorded; the v0.3 probe below is historical evidence.
+
+Physical switch testing passed for fingerprint wake in both directions, including fingerprint unlock after waking normally. Keyboard wake off failed: raw events from the patched driver still woke the compositor after the helper stopped emitting synthetic wake. Version 0.4.1 adds a display-dependent keyboard grab to address this. Its portable suite has 137 passing tests on the development Mac, including display-on release, lost/invalid display state, retry after ioctl failure, late callbacks after close, keyboard identity guards, toggle/pause cleanup, and recovery from a monitor error.
+
+A temporary user service exercised the same keyboard gate against the actual compositor and app preferences, alongside the installed v0.4.0 watcher. The owner confirmed all three correction checks: with key wake off, a letter leaves the dark screen off; after power-button wake, normal typing works; turning key wake on restores key wake. The trial does not read or save typed content. Permanent v0.4.1 installation acceptance is separate from this trial.
+
+The phone passes the expanded 137-test suite (136 pass, one Node-dependent skip). Native Click builds `pro1x-slider.lectops_0.4.1_all.click`, and Qt 5 `qmllint` accepts its app. The layout is unchanged from the inspected v0.4.0 captures apart from the About version. The keyboard gate and its hardware integration in this build are the same source tested on the phone.
+
+The owner installed v0.4.1 from Terminal. All 15 checked backend/app files match the build, both package units are enabled/active, all six feature reports are active, the heartbeat is fresh, and the requested settings revision is applied. Both old helpers are disabled/inactive, the temporary gate service is absent/inactive, and no migration journal remains. Keyboard/slider wake remain on and fingerprint wake remains off.
+
+The visible Terminal output showed successful upgrade followed by `Operation not permitted` removing the extracted `__pycache__`. The privileged installer had created bytecode in the caller's temporary directory. The wrapper now invokes Python with `-B` in both privilege paths; an isolated import test checks that neither path creates bytecode. This changes future installer cleanup without requiring reinstallation of the working backend. Click also printed old-version cleanup warnings about its user-bus connection and old AppArmor cache; current-version profile verification is recorded separately.
+
+Direct inspection confirmed UID 0 ownership of the leftover bytecode directories. All nine packaging tests, including the new no-bytecode regression, pass on both Mac and phone. The old v0.4.0 app directory and profile are absent, and the v0.4.1 profile is present. The corrected installer retains the same native Click payload and installed backend sources; only its wrapper, regression test, and documentation change.
+
+Final acceptance of the installed v0.4.1 package passed: the owner confirmed that keyboard wake off keeps the display dark and on restores key wake. The actual native app runs from its v0.4.1 installation directory under `pro1x-slider.lectops_slider-settings_0.4.1 (enforce)`. A fresh backend report acknowledges the saved settings, with keyboard/slider wake on and fingerprint wake off. The corrected installer in Downloads was replaced and checksum-verified; no further backend installation was needed. These checks do not add a new outside-write confinement probe or reboot test.
+
+Before pushing the source, the complete suite passed all 138 tests on the Mac. The native evidence remains the 137-test phone run plus the nine packaging tests after the wrapper correction. Device-specific build artifacts and validation captures are retained outside Git; disposable build and test workspaces can be removed without changing the installed services or rollback helpers.
+
 ## Recorded working configuration
 
 | Component | Tested value |

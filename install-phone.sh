@@ -15,9 +15,10 @@ for argument in "$@"; do
     esac
 done
 if [ "$(id -u)" -eq 0 ]; then
-    /usr/bin/python3 "$slider_dir/install.py" "$action"
+    /usr/bin/python3 -B "$slider_dir/install.py" "$action"
 else
-    sudo /usr/bin/python3 "$slider_dir/install.py" "$action"
+    # Keep root-owned bytecode out of the caller's temporary extraction tree.
+    sudo /usr/bin/python3 -B "$slider_dir/install.py" "$action"
 fi
 if [ "$reload" = no ]; then
     exit 0

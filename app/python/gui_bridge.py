@@ -7,13 +7,12 @@ from pathlib import Path
 import time
 import uuid
 
-from slider_common import (APP_ID, VERSION, PROTOCOL_VERSION, SCHEMA_VERSION,
+from slider_common import (APP_ID, VERSION, PROTOCOL_VERSION, SCHEMA_VERSION, FEATURES,
                            atomic_json_write, config_path, default_config,
                            load_config, save_config, status_path, validate_config)
 
 MAX_STATUS_BYTES = 16384
 STALE_AFTER_SECONDS = 12
-FEATURES = ("backlight", "rotation", "keyboard")
 FEATURE_STATES = ("active", "idle", "disabled", "waiting", "error", "unsupported")
 
 
@@ -182,7 +181,9 @@ class Bridge:
             allowed = {"enabled": None,
                        "backlight": ("enabled", "brightness_percent"),
                        "rotation": ("enabled", "direction"),
-                       "keyboard": ("hide_when_open",)}
+                       "keyboard": ("hide_when_open",),
+                       "wake": ("slider_open", "keyboard"),
+                       "fingerprint": ("wake_screen",)}
             config = self._config()
             if self._missing_config and not self._has_baseline:
                 raise ValueError("Waiting for a fresh watcher configuration; restore defaults explicitly to start a new configuration")

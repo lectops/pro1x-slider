@@ -32,7 +32,7 @@ class GuiBridgeTests(unittest.TestCase):
 
     def report(self, **changes):
         config = self.bridge.snapshot()["config"]
-        report = {"schema_version": 1, "protocol_version": 1, "backend_version": VERSION,
+        report = {"schema_version": gui_bridge.SCHEMA_VERSION, "protocol_version": gui_bridge.PROTOCOL_VERSION, "backend_version": VERSION,
                   "instance_id": "watcher-instance", "heartbeat_monotonic": self.now,
                   "observed_revision": config["revision"], "applied_revision": config["revision"],
                   "slider": "open", "state": "active", "config": config, "config_error": None,
@@ -69,6 +69,18 @@ class GuiBridgeTests(unittest.TestCase):
         second = self.bridge.save_patch({"enabled": False})
         self.assertNotEqual(second["config"]["revision"], saved["revision"])
         self.assertEqual(second["config"]["rotation"], saved["rotation"])
+
+    def test_wake_controls_save_independently_and_keep_slider_preferences(self):
+        self.bridge.reset_defaults()
+        before = self.bridge.snapshot()['config']
+        result = self.bridge.save_patch({'wake': {'keyboard': True}, 'fingerprint': {'wake_screen': False}})
+        self.assertIsNone(result['error'])
+        config = load_config(self.bridge.preferences)
+        self.assertTrue(config['wake']['keyboard'])
+        self.assertFalse(config['wake']['slider_open'])
+        self.assertFalse(config['fingerprint']['wake_screen'])
+        self.assertEqual(config['rotation'], before['rotation'])
+        self.assertEqual(config['keyboard'], before['keyboard'])
 
     def test_invalid_or_privileged_fields_never_change_the_preferences_file(self):
         save_config(self.bridge.preferences, default_config())
@@ -165,7 +177,7 @@ class GuiBridgeTests(unittest.TestCase):
 
     def test_incompatible_backend_blocks_both_partial_saves_and_defaults(self):
         save_config(self.bridge.preferences, default_config())
-        self.report(protocol_version=2)
+        self.report(protocol_version=99)
         before = self.bridge.preferences.read_bytes()
         for action in (lambda: self.bridge.save_patch({"enabled": False}), self.bridge.reset_defaults):
             result = action()
@@ -219,7 +231,7 @@ class GuiBridgeTests(unittest.TestCase):
 
     def test_malformed_incompatible_and_oversized_reports_are_not_trusted(self):
         valid = self.report()
-        invalid = [dict(valid, protocol_version=2), dict(valid, schema_version=True),
+        invalid = [dict(valid, protocol_version=99), dict(valid, schema_version=True),
                    dict(valid, heartbeat_monotonic=True), dict(valid, heartbeat_monotonic=float("inf")),
                    dict(valid, applied_revision="unobserved"), dict(valid, config={}),
                    dict(valid, features={}), dict(valid, capabilities={}),
@@ -333,7 +345,7 @@ class GuiBridgeTests(unittest.TestCase):
 const fs = require('fs'), vm = require('vm'), assert = require('assert');
 const context = {}; vm.createContext(context);
 vm.runInContext(fs.readFileSync(process.argv[1], 'utf8'), context);
-const s = {config: {revision: 'new', enabled: true, backlight:{enabled:true}, rotation:{enabled:true}, keyboard:{hide_when_open:true}}, backend: 'running', error: null,
+const s = {config: {revision: 'new', enabled: true, backlight:{enabled:true}, rotation:{enabled:true}, keyboard:{hide_when_open:true}, wake:{slider_open:false,keyboard:false}, fingerprint:{wake_screen:true}}, backend: 'running', error: null,
   status: {observed_revision: 'old', applied_revision: 'old', state: 'active', capabilities:{backlight:true, rotation:true, keyboard:true}, features:{rotation:{state:'idle',message:''}}}};
 assert.match(context.heading(s, false, false), /waiting/);
 s.status.observed_revision = 'new'; s.status.applied_revision = null;

@@ -73,6 +73,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--qt-prefix', type=Path, default=Path('/'))
     parser.add_argument('--stock-qml', type=Path, default=Path(TARGET))
+    parser.add_argument('--skip-portable', action='store_true',
+                        help='Run native checks only when the portable suite already passed')
     args = parser.parse_args()
     source = Path(__file__).resolve().parent
     result = patched(args.stock_qml.read_bytes())
@@ -94,11 +96,14 @@ def main():
              '-import', '/usr/lib/aarch64-linux-gnu/lomiri/qml',
              '-import', str(prefix / 'usr/lib/aarch64-linux-gnu/qt5/qml')],
         ]
+        if args.skip_portable:
+            commands = commands[1:]
         failed = False
         for command in commands:
             print('RUN', ' '.join(command), flush=True)
             check = subprocess.run(command, cwd=source, env=environment,
-                                   text=True, capture_output=True, timeout=30)
+                                   text=True, capture_output=True,
+                                   timeout=120 if command[0] == 'python3' else 30)
             print(check.stdout + check.stderr, flush=True)
             failed |= check.returncode != 0
         raise SystemExit(int(failed))

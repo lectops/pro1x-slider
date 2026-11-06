@@ -65,8 +65,34 @@ class PackageTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 command = log.read_text().splitlines()
                 self.assertEqual(command[0], '/usr/bin/python3')
-                self.assertEqual(Path(command[1]).name, 'install.py')
-                self.assertEqual(command[2:], [expected])
+                self.assertEqual(command[1], '-B')
+                self.assertEqual(Path(command[2]).name, 'install.py')
+                self.assertEqual(command[3:], [expected])
+
+    def test_wrapper_does_not_create_privileged_bytecode_in_extracted_source(self):
+        fixture = self.root / 'wrapper-fixture'
+        fixture.mkdir()
+        (fixture / 'install-phone.sh').write_bytes((self.source / 'install-phone.sh').read_bytes())
+        (fixture / 'fixture_module.py').write_text('value = 42\n')
+        (fixture / 'install.py').write_text('import fixture_module\nassert fixture_module.value == 42\n')
+        commands = self.root / 'wrapper-commands'
+        commands.mkdir()
+        # No privilege is acquired: the fixture imports one harmless module.
+        sudo = commands / 'sudo'
+        sudo.write_text('#!/bin/sh\nexec "$@"\n')
+        sudo.chmod(0o755)
+        env = dict(os.environ, PATH=str(commands) + os.pathsep + os.environ.get('PATH', ''))
+        env.pop('PYTHONDONTWRITEBYTECODE', None)
+        env.pop('PYTHONPYCACHEPREFIX', None)
+        for uid in (0, 1000):
+            with self.subTest(uid=uid):
+                identity = commands / 'id'
+                identity.write_text('#!/bin/sh\necho ' + str(uid) + '\n')
+                identity.chmod(0o755)
+                result = subprocess.run(['/bin/sh', str(fixture / 'install-phone.sh'), '--no-reload'],
+                                        env=env, text=True, capture_output=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse((fixture / '__pycache__').exists())
 
     def test_unknown_update_flag_fails_before_requesting_privilege(self):
         log, env = self.privilege_mocks()
